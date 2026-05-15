@@ -1,0 +1,14 @@
+[package]
+name = "spf-policy-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk.workspace = true
+spf-shared-types = { path = "../../shared/types" }
+spf-shared-errors = { path = "../../shared/errors" }
+spf-shared-events = { path = "../../shared/events" }

@@ -1,0 +1,5 @@
+/target
+**/*.wasm
+Cargo.lock
+managed_accounts_pdf_text.txt
+*.Zone.Identifier

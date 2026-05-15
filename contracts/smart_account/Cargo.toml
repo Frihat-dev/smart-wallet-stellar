@@ -1,0 +1,26 @@
+[package]
+name = "spf-smart-account"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk.workspace = true
+spf-shared-types = { path = "../../shared/types" }
+spf-shared-events = { path = "../../shared/events" }
+spf-shared-errors = { path = "../../shared/errors" }
+spf-shared-auth = { path = "../../shared/auth" }
+spf-transfer-adapter = { path = "../adapters/transfer_adapter" }
+spf-swap-adapter = { path = "../adapters/swap_adapter" }
+spf-yield-adapter = { path = "../adapters/yield_adapter" }
+spf-split-adapter = { path = "../adapters/split_adapter" }
+spf-policy-engine = { path = "../policy_engine" }
+spf-condition-verifier = { path = "../condition_verifier" }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+ed25519-dalek = "2.1.1"
+rand = "0.8.5"
