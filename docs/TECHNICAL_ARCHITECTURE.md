@@ -240,7 +240,9 @@ The architecture aligns with the following Stellar documentation and tools:
 - Stellar Asset Contract: https://developers.stellar.org/docs/tokens/stellar-asset-contract
 - Scaffold Stellar: https://developers.stellar.org/docs/tools/scaffold-stellar
 - Stellar Wallets Kit: https://stellarwalletskit.dev/
+- Stellar Wallets Kit signature methods: https://stellarwalletskit.dev/how-to/sign-with-wallet.html
 - Freighter wallet integration: https://developers.stellar.org/docs/build/guides/freighter
+- Freighter API signing methods: https://docs.freighter.app/docs/guide/usingfreighterwebapp/
 - Stellar Lab: https://developers.stellar.org/docs/tools/lab
 - RPC `simulateTransaction`: https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/simulateTransaction
 
@@ -250,7 +252,9 @@ These references establish the core integration assumptions:
 - SAC is the required path for contracts to interact with Stellar assets.
 - Scaffold Stellar provides the development framework for a full-stack Stellar dApp.
 - Wallets Kit can connect multiple Stellar wallets, including xBull and Freighter, from one application integration.
+- Wallets Kit exposes transaction, authorization-entry, and message signing methods, but wallet modules may differ in which methods they support.
 - Freighter supports browser-based Soroban token and smart contract signing flows.
+- Freighter explicitly exposes both `signTransaction` and `signAuthEntry` through `@stellar/freighter-api`.
 - Stellar Lab can deploy contracts, invoke smart contracts, simulate transactions, inspect XDR, and debug transaction results.
 - RPC simulation is required before submission because it calculates transaction data, required authorizations, and resource fees.
 
@@ -729,6 +733,15 @@ Integration library:
 
 The frontend initializes Wallets Kit with default wallet modules and prioritizes Freighter and xBull in the connection UI. WalletConnect and additional supported wallets can remain available after the primary flows are stable.
 
+Wallet support status:
+
+| Wallet Path | Verified Support | Architecture Requirement |
+|---|---|---|
+| Freighter via `@stellar/freighter-api` | `signTransaction` and `signAuthEntry` are documented | Freighter can be used for transaction signing and Soroban authorization-entry signing, subject to end-to-end SmartAccount tests |
+| Freighter via Wallets Kit | Freighter is a supported Wallets Kit module | Wallets Kit integration MUST preserve access to the required signing method for the active flow |
+| xBull via Wallets Kit | xBull is a supported Wallets Kit module | xBull MUST be implementation-tested for the exact `signTransaction` and `signAuthEntry` path required by SmartAccount |
+| Any wallet without required auth-entry support | Not sufficient for direct SmartAccount authorization | The only permitted fallback is wallet-approved scoped session key creation with explicit limits |
+
 ### 8.2 Wallet Responsibilities
 
 Wallets are responsible for:
@@ -754,7 +767,8 @@ Important distinction:
 
 - Transaction signing authorizes submission by the transaction source account.
 - Soroban authorization entries authorize contract invocations and are what `__check_auth` verifies for a contract account.
-- V1 MUST validate the exact Freighter and xBull support path for auth-entry signing or transaction signing before presenting a flow as wallet-native.
+- Freighter's `signAuthEntry` support is documented, but V1 MUST validate the full SmartAccount signing flow end to end.
+- xBull is supported through Wallets Kit, but V1 MUST validate the exact xBull support path for auth-entry signing or transaction signing before presenting a flow as xBull-native.
 - When a wallet cannot produce the required SmartAccount authorization material, the only permitted fallback is a wallet-approved scoped session key with explicit limits.
 
 The signer model supports three practical signing paths:
@@ -1953,6 +1967,8 @@ Required engineering units:
 - SAC is the only v1 asset interface.
 - Stellar RPC simulation is required before submission.
 - Freighter and xBull are supported through Wallets Kit.
+- Freighter `signAuthEntry` and `signTransaction` flows are validated end to end.
+- xBull `signAuthEntry` and `signTransaction` support is tested against the active Wallets Kit module before enabling xBull-native SmartAccount signing.
 - Scaffold Stellar is used for the frontend/client foundation.
 - Stellar Lab can reproduce the testnet validation deployment and invocation flow.
 
