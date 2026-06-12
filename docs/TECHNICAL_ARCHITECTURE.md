@@ -7,7 +7,7 @@
 | Asset model | Stellar Asset Contract (SAC) |
 | Primary wallets | Freighter and xBull through Stellar Wallets Kit |
 | Frontend framework | Scaffold Stellar |
-| Architecture level | Full technical design for contracts, frontend, relayer, verification, deployment, and security controls |
+| Architecture level | Full technical design for contracts, dApp, TypeScript SDK, relayer, verification, deployment, and security controls |
 
 ## 1. Purpose
 
@@ -39,9 +39,9 @@ Protocol summary:
 | Authorization model | `__check_auth` validates signers, roles, thresholds, sessions, and execution context |
 | Asset support | SAC assets only in V1 |
 | Execution model | Approved actions are dispatched through allowlisted adapters |
-| Automation model | Stored capabilities and child executions enforce bounded recurring or conditional actions |
+| Automation model | Stored capabilities and child executions enforce bounded scheduled treasury actions |
 | Relayer model | Relayers submit transactions but hold no treasury authority |
-| Condition model | External conditions require signed attestations verified onchain |
+| Condition model | Extension-ready signed attestation verification; not required for the core scheduled payment launch flow |
 | Recovery model | Pause, freeze, guardian, delayed recovery, and signer replacement controls |
 | Observability model | Security-significant events and replay records support audit trails |
 
@@ -53,7 +53,7 @@ STA supports:
 - scoped session keys
 - approved SAC assets
 - approved recipients and adapters
-- recurring and conditional treasury actions
+- scheduled treasury actions
 - relayer-triggered execution without relayer authority
 - recovery, pause, and freeze controls
 - audit-friendly event and state boundaries
@@ -76,7 +76,7 @@ Typical users:
 - payment providers and marketplaces handling payout rules
 - tokenization platforms distributing proceeds or fees
 - DAOs and protocol treasuries enforcing spending controls
-- treasury teams that need recurring, conditional, or split payments
+- treasury teams that need recurring or split payments
 
 Core idea: **user intent + onchain policy + bounded execution = programmable treasury control**.
 
@@ -85,7 +85,7 @@ STA separates five concerns:
 - authorization: who can approve or operate the account
 - policy: what assets, recipients, limits, timing rules, and adapters are allowed
 - intent lifecycle: which scheduled actions have been approved and when they can execute
-- execution: how approved transfers, splits, swaps, and yield actions are carried out
+- execution: how approved transfers and splits are carried out
 - recovery: how compromised or lost authority can be frozen and restored safely
 
 The architecture is intentionally conservative:
@@ -94,7 +94,7 @@ The architecture is intentionally conservative:
 - SAC-only assets in v1
 - relayers are submitters, not authorities
 - adapters are narrow and allowlisted
-- every recurring or conditional action is bounded by explicit onchain state
+- every scheduled action is bounded by explicit onchain state
 
 ### 2.2 User-Facing Features and Services
 
@@ -108,7 +108,7 @@ flowchart LR
     Policy["Policy controls<br/>assets, recipients, limits"]
     Payments["Payments<br/>vendor and payroll transfers"]
     Splits["Revenue splits<br/>multi-recipient payouts"]
-    Automation["Automation<br/>scheduled and conditional actions"]
+    Automation["Automation<br/>scheduled treasury actions"]
     Recovery["Recovery controls<br/>pause, freeze, guardians"]
     Audit["Audit trail<br/>events, status, exports"]
 
@@ -143,7 +143,7 @@ User-facing service model:
 | Immediate payments | Pay vendors, payroll, or operational recipients | `execute_interactive`, PolicyEngine, TransferAdapter |
 | Revenue splits | Distribute one inflow across multiple recipients | SplitAdapter and per-recipient validation |
 | Scheduled execution | Run recurring treasury operations | IntentRegistry child execution IDs and relayer submission |
-| Conditional execution | Pay only after an external condition is proven | ConditionVerifier attestor quorum and replay protection |
+| Conditional execution | Extension path for future proof-gated payments | ConditionVerifier attestor quorum and replay protection |
 | Recovery and freeze | Restore control after key loss or compromise | pause, freeze, guardian threshold, delayed recovery |
 | Audit and monitoring | Reconstruct every security-significant action | events, replay records, indexer, dashboards |
 
@@ -161,7 +161,7 @@ V1 supports the following protocol capabilities:
 | Immediate payments | Execute wallet-approved SAC transfers | SmartAccount, PolicyEngine, TransferAdapter |
 | Revenue splits | Split one asset transfer across approved recipients | SmartAccount, PolicyEngine, SplitAdapter |
 | Scheduled execution | Execute bounded scheduled actions through child execution IDs | SmartAccount, IntentRegistry |
-| Conditional execution | Require attestor quorum before action execution | SmartAccount, ConditionVerifier |
+| Conditional execution | Extension-ready proof-gated execution path, outside the core scheduled payment launch flow | SmartAccount, ConditionVerifier |
 | Recovery | Freeze, delay, replace signers, and restore safe operation | SmartAccount |
 
 ### 2.4 Non-Goals and Boundaries
@@ -185,7 +185,7 @@ V1 intentionally excludes:
 | Wallet signer | Signs transaction XDR or authorization material | Cannot authorize actions outside assigned signer role and threshold |
 | Session key | Executes bounded delegated actions | Cannot manage signers, policy, adapters, destinations, or recovery |
 | Relayer | Pays fees and submits eligible automation transactions | Cannot create or expand authority |
-| Attestor | Signs external condition proofs | Cannot trigger execution unless ConditionVerifier quorum and binding checks pass |
+| Attestor | Optional signer for external condition proofs | Cannot trigger execution unless ConditionVerifier quorum and binding checks pass |
 | Indexer | Reads events and builds audit views | Cannot be used as execution truth |
 | RPC provider | Provides transport, simulation, submission, and transaction status | Cannot be treated as an authority source |
 
@@ -196,8 +196,8 @@ V1 intentionally excludes:
 | SmartAccount | Root authorization, signer management, policy checks, adapter dispatch, recovery controls | Act as a generic unrestricted executor |
 | PolicyEngine | Validate policy version, risk tier, limits, and rule scope | Move funds or own treasury authority |
 | IntentRegistry | Maintain parent intents, child execution IDs, replay state, and lifecycle records | Execute treasury actions directly |
-| ConditionVerifier | Verify attestor quorum, freshness, domain binding, and attestation replay protection | Trust offchain conditions without signature verification |
-| Adapters | Execute narrow preauthorized operations such as transfer, split, swap, or yield | Expand authority beyond the exact SmartAccount-approved action |
+| ConditionVerifier | Extension module for attestor quorum, freshness, domain binding, and attestation replay protection | Trust offchain conditions without signature verification |
+| Adapters | Execute narrow preauthorized operations such as transfer and split | Expand authority beyond the exact SmartAccount-approved action |
 | Relayer | Build, simulate, submit, poll, and index automation transactions | Hold privileged signer keys |
 | Frontend | Build readable actions, connect wallets, simulate, sign, submit, and display status | Ask users to sign opaque or policy-ambiguous actions |
 
@@ -274,7 +274,7 @@ This decision demonstrates Stellar-native treasury flows with available wallet t
 
 ### Decision 2: IntentRegistry is a core module
 
-`IntentRegistry` is required as a first-class module for scheduled, recurring, and conditional treasury workflows. SmartAccount may store compact capability references for fast authorization checks, but the canonical lifecycle and replay state belongs in `IntentRegistry`.
+`IntentRegistry` is required as a first-class module for scheduled and recurring treasury workflows. SmartAccount may store compact capability references for fast authorization checks, but the canonical lifecycle and replay state belongs in `IntentRegistry`.
 
 `IntentRegistry` is part of the core architecture because recurring treasury workflows need:
 
@@ -286,7 +286,7 @@ This decision demonstrates Stellar-native treasury flows with available wallet t
 - auditable execution history
 - pruning and retention rules
 
-SmartAccount remains the execution authority, while IntentRegistry is the canonical lifecycle and replay-state module for scheduled, recurring, and conditional treasury operations.
+SmartAccount remains the execution authority, while IntentRegistry is the canonical lifecycle and replay-state module for scheduled and recurring treasury operations.
 
 ### Decision 3: Custom minimal relayer for V1
 
@@ -295,7 +295,6 @@ STA uses a custom minimal Node.js relayer for the testnet validation architectur
 The relayer responsibilities are:
 
 - scan eligible execution windows
-- request or receive attestation proofs
 - build Soroban invocation transactions
 - call RPC simulation
 - submit transactions
@@ -327,7 +326,7 @@ flowchart LR
     WebApp -->|"simulate / read / submit"| RPC
     WebApp -->|"optional manual validation flow"| Lab
     Relayer -->|"simulate and submit automation"| RPC
-    Attestor -->|"signed condition proof"| Relayer
+    Attestor -. "optional condition proof" .-> Relayer
     RPC --> Soroban
     Soroban --> STA
     STA -->|"authorized token calls"| SAC
@@ -376,7 +375,7 @@ Diagram explanation:
 
 - This diagram separates offchain components from onchain enforcement components.
 - Offchain components can prepare, sign, submit, attest, index, and display actions, but they cannot decide whether treasury movement is valid.
-- Onchain contracts enforce signer authority, policy, intent replay protection, attestation validity, adapter constraints, and asset movement.
+- Onchain contracts enforce signer authority, policy, intent replay protection, optional attestation validity, adapter constraints, and asset movement.
 
 Key takeaway: the relayer, RPC provider, indexer, frontend, and attestor services are outside the authority boundary; treasury movement is authorized only by onchain policy.
 
@@ -385,14 +384,14 @@ Diagram zones:
 | Zone | Components | Trust Position |
 |---|---|---|
 | Offchain | Wallet, web app, relayer, indexer, attestor, RPC provider | Can prepare, sign, submit, attest, index, and display actions, but cannot authorize treasury movement |
-| Onchain | SmartAccount, PolicyEngine, IntentRegistry, ConditionVerifier, approved adapters, SAC assets | Enforces authorization, policy, replay protection, condition verification, and asset movement |
+| Onchain | SmartAccount, PolicyEngine, IntentRegistry, optional ConditionVerifier, approved adapters, SAC assets | Enforces authorization, policy, replay protection, optional condition verification, and asset movement |
 
 Security interpretation:
 
 - Offchain systems can prepare, sign, submit, index, and display actions.
 - Offchain systems are not trusted to decide whether treasury movement is valid.
 - SmartAccount is the root authority for treasury execution.
-- PolicyEngine, IntentRegistry, ConditionVerifier, and approved adapters are constrained onchain modules.
+- PolicyEngine, IntentRegistry, optional ConditionVerifier, and approved adapters are constrained onchain modules.
 - The relayer is intentionally outside the trust boundary and cannot create authority.
 - RPC providers and indexers are read/transport dependencies, not policy authorities.
 
@@ -403,13 +402,13 @@ Boundary policy:
 | SmartAccount | Trusted root | MUST authorize every treasury movement |
 | PolicyEngine | Constrained onchain module | MUST validate policy version and rule scope |
 | IntentRegistry | Constrained onchain module | MUST enforce intent lifecycle and replay state |
-| ConditionVerifier | Constrained onchain module | MUST verify quorum, freshness, and proof binding |
+| ConditionVerifier | Optional constrained onchain module | MUST verify quorum, freshness, and proof binding when enabled |
 | Approved adapters | Constrained onchain modules | MUST execute only SmartAccount-preauthorized actions |
 | Wallets | User-controlled signers | MUST sign bounded payloads; cannot bypass onchain policy |
 | Relayer | Untrusted submitter | MUST NOT hold owner, governance, recovery, or management authority |
 | RPC provider | Untrusted transport | MUST NOT be treated as an authority source |
 | Indexer | Untrusted read model | MUST NOT be used as execution truth |
-| Attestor service | Semi-trusted input | MUST be verified by ConditionVerifier quorum before execution |
+| Attestor service | Optional semi-trusted input | MUST be verified by ConditionVerifier quorum before execution when proof-gated flows are enabled |
 
 ## 6. Onchain Contract Architecture
 
@@ -450,7 +449,7 @@ Representative V1 entrypoints:
 | `create_automation_capability(capability)` | Store a bounded automation capability |
 | `revoke_automation_capability(capability_id)` | Revoke a stored automation capability |
 | `execute_interactive(action, expected_policy_version, signer_id)` | Execute a wallet-approved action |
-| `execute_automation(capability_id, child_execution_id, attestation_proof)` | Execute a scheduled or conditional action |
+| `execute_automation(capability_id, child_execution_id, optional_proof)` | Execute a scheduled action; optional proof is used only for proof-gated extensions |
 | `pause()` / `unpause()` | Disable or restore normal non-emergency execution |
 | `freeze()` | Enter emergency frozen state |
 | `initiate_recovery(...)` | Start delayed signer or policy recovery |
@@ -501,7 +500,7 @@ Canonical responsibilities:
 
 ### 6.4 ConditionVerifier
 
-`ConditionVerifier` verifies offchain condition proofs for conditional execution.
+`ConditionVerifier` verifies offchain condition proofs for optional proof-gated execution.
 
 Responsibilities:
 
@@ -532,12 +531,12 @@ Recovery controls are anchored in `SmartAccount` in V1:
 
 Adapters are deliberately narrow. They do not create authority and MUST require SmartAccount authorization.
 
-Adapter set:
+V1 adapter set:
 
 - `TransferAdapter`: SAC transfer from SmartAccount to destination.
 - `SplitAdapter`: one SAC balance split across approved recipients.
-- `SwapAdapter`: approved treasury route execution with slippage constraints.
-- `YieldAdapter`: approved treasury strategy operation.
+
+Extension adapters such as swaps or yield strategies are outside the core launch scope and MUST follow the same exact-preauthorization rule before activation.
 
 Adapter security rule: **No adapter may move treasury assets unless SmartAccount has preauthorized the exact operation.**
 
@@ -548,29 +547,22 @@ flowchart TB
     SA["SmartAccount<br/>contract account<br/>root treasury authority"]
     PE["PolicyEngine<br/>policy version<br/>risk and rule validation"]
     IR["IntentRegistry<br/>parent intents<br/>child execution state"]
-    CV["ConditionVerifier<br/>attestor quorum<br/>condition replay protection"]
+    CV["ConditionVerifier<br/>optional extension<br/>condition replay protection"]
     RM["RecoveryManager<br/>optional recovery orchestration"]
 
     TA["TransferAdapter"]
     SPA["SplitAdapter"]
-    SWA["SwapAdapter"]
-    YA["YieldAdapter"]
     SAC["Stellar Asset Contracts<br/>approved SAC assets"]
 
     SA -->|"validate policy"| PE
     SA -->|"create / consume intent state"| IR
-    SA -->|"consume attestation proof"| CV
+    SA -. "optional proof-gated flow" .-> CV
     SA -. "optional recovery hooks" .-> RM
 
     SA -->|"preauthorize exact transfer"| TA
     SA -->|"preauthorize exact split"| SPA
-    SA -->|"preauthorize approved route"| SWA
-    SA -->|"preauthorize approved strategy"| YA
-
     TA --> SAC
     SPA --> SAC
-    SWA --> SAC
-    YA --> SAC
 
     classDef root fill:#e3f2fd,stroke:#1565c0,color:#111;
     classDef module fill:#f1f8e9,stroke:#558b2f,color:#111;
@@ -578,14 +570,14 @@ flowchart TB
     classDef asset fill:#fffde7,stroke:#f9a825,color:#111;
     class SA root;
     class PE,IR,CV,RM module;
-    class TA,SPA,SWA,YA adapter;
+    class TA,SPA adapter;
     class SAC asset;
 ```
 
 Diagram explanation:
 
 - This diagram shows the full onchain module topology around SmartAccount.
-- SmartAccount is the root authority and coordinates policy validation, intent state, condition verification, recovery hooks, and adapter dispatch.
+- SmartAccount is the root authority and coordinates policy validation, intent state, optional condition verification, recovery hooks, and adapter dispatch.
 - Adapters are placed below SmartAccount because they execute only after SmartAccount has preauthorized an exact action.
 - SAC sits at the bottom because all V1 asset movement uses Stellar Asset Contracts.
 
@@ -607,33 +599,27 @@ flowchart LR
     SA["SmartAccount"]
     PE["PolicyEngine"]
     IR["IntentRegistry"]
-    CV["ConditionVerifier"]
+    CV["ConditionVerifier<br/>optional"]
     RM["RecoveryManager"]
     TRANSFER["TransferAdapter"]
     SPLIT["SplitAdapter"]
-    SWAP["SwapAdapter"]
-    YIELD["YieldAdapter"]
     SAC["Stellar Asset Contracts"]
 
     SA --> PE
     SA --> IR
-    SA --> CV
+    SA -. optional .-> CV
     SA --> RM
     SA --> TRANSFER
     SA --> SPLIT
-    SA --> SWAP
-    SA --> YIELD
     TRANSFER --> SAC
     SPLIT --> SAC
-    SWAP --> SAC
-    YIELD --> SAC
 ```
 
 Diagram explanation:
 
 - This diagram focuses only on contract-to-contract calls.
 - SmartAccount is the caller that coordinates every security-sensitive module interaction.
-- PolicyEngine validates rules, IntentRegistry owns automation lifecycle and replay state, ConditionVerifier verifies external proofs, and adapters perform narrow execution against SAC.
+- PolicyEngine validates rules, IntentRegistry owns scheduled execution lifecycle and replay state, the optional ConditionVerifier verifies external proofs when enabled, and adapters perform narrow execution against SAC.
 
 Key takeaway: contract interactions are intentionally hub-and-spoke around SmartAccount to keep treasury authorization centralized and auditable.
 
@@ -643,10 +629,10 @@ Interaction rules:
 |---|---|---|
 | `SmartAccount -> PolicyEngine` | interactive execution, automation execution, policy-sensitive management | Policy version and rule scope MUST be validated before execution |
 | `SmartAccount -> IntentRegistry` | automation creation, child execution consumption, cancellation, expiry | Intent lifecycle and replay state MUST be canonical in IntentRegistry |
-| `SmartAccount -> ConditionVerifier` | conditional execution requiring an external proof | Attestor quorum, freshness, domain binding, and attestation replay MUST be verified before execution |
+| `SmartAccount -> ConditionVerifier` | optional proof-gated execution requiring an external proof | Attestor quorum, freshness, domain binding, and attestation replay MUST be verified before execution |
 | `SmartAccount -> RecoveryManager` | optional recovery orchestration | Recovery hooks MUST NOT bypass freeze, delay, or quorum rules |
-| `SmartAccount -> adapters` | approved payment, split, swap, or yield action | Adapters MUST receive exact preauthorized action payloads only |
-| `Adapters -> SAC` | token transfer, split transfer, approved route, approved strategy | SAC calls MUST use approved assets and SmartAccount-authorized sub-invocations |
+| `SmartAccount -> adapters` | approved payment or split action | Adapters MUST receive exact preauthorized action payloads only |
+| `Adapters -> SAC` | token transfer or split transfer | SAC calls MUST use approved assets and SmartAccount-authorized sub-invocations |
 
 Execution ownership:
 
@@ -655,7 +641,7 @@ Execution ownership:
 | SmartAccount | signer authority, root execution decision, adapter dispatch | external condition truth, independent token movement outside SAC |
 | PolicyEngine | policy validation and risk rules | signer authority or funds |
 | IntentRegistry | intent lifecycle and child execution replay state | treasury execution authority |
-| ConditionVerifier | attestor verification and attestation replay state | business logic outside the signed proof |
+| ConditionVerifier | optional attestor verification and attestation replay state | business logic outside the signed proof |
 | Adapters | narrow execution mechanics | policy expansion or signer authority |
 | SAC | asset balances and token interface | treasury policy |
 
@@ -839,7 +825,7 @@ Interactive execution flow:
 
 1. User connects Freighter or xBull through Wallets Kit.
 2. App fetches SmartAccount status and policy state from RPC.
-3. User creates a payment, split, swap, or yield action.
+3. User creates a payment or split action.
 4. App builds the `execute_interactive` invocation.
 5. App simulates the transaction with RPC.
 6. Simulation returns required auth entries, resource fee, and transaction data.
@@ -861,10 +847,10 @@ Automation execution flow:
 
 1. Relayer detects eligible child execution window.
 2. Relayer builds `execute_automation`.
-3. Relayer includes required attestation proof when needed.
+3. Relayer includes optional proof only when a proof-gated extension is enabled.
 4. Transaction is simulated.
 5. Relayer submits transaction.
-6. SmartAccount validates capability, policy version, execution window, child ID, attestation, and policy.
+6. SmartAccount validates capability, policy version, execution window, child ID, optional proof if required, and policy.
 7. SmartAccount dispatches the adapter call.
 8. Child execution ID is marked consumed.
 
@@ -990,7 +976,7 @@ testnet:
 mainnet:
   network_passphrase: "Public Global Stellar Network ; September 2015"
   rpc_url: "production RPC provider"
-  contracts: "audited contract IDs produced by controlled mainnet deployment"
+  contracts: "release-verified contract IDs produced by controlled mainnet deployment"
 ```
 
 Generated client responsibilities:
@@ -1075,8 +1061,7 @@ The relayer is a submitter, not an authority.
 
 Responsibilities:
 
-- monitor eligible scheduled or conditional execution windows
-- request or receive attestation proofs
+- monitor eligible scheduled execution windows
 - build `execute_automation` transactions
 - simulate transactions
 - pay transaction fees
@@ -1098,9 +1083,9 @@ Relayer implementation requirements:
 - mainnet operation requires a hosted worker with queue, retry logic, execution locks, and monitoring
 - any managed relayer replacement MUST preserve the same no-authority trust boundary
 
-### 10.2 Attestor Service
+### 10.2 Optional Attestor Service
 
-The attestor service signs external condition proofs.
+The attestor service signs external condition proofs for future proof-gated execution flows. It is extension-ready and is not required for the core scheduled payment launch flow.
 
 Examples:
 
@@ -1157,7 +1142,7 @@ The testnet validation service can read RPC events directly. A production servic
 - session creation and revocation
 - intent creation and cancellation
 - automation execution
-- attestation consumption
+- attestation consumption when proof-gated execution is enabled
 - recovery actions
 - adapter execution records
 
@@ -1173,7 +1158,7 @@ This powers:
 ```mermaid
 flowchart LR
     Scheduler["Schedule Scanner<br/>eligible windows"]
-    Proofs["Proof Intake<br/>attestation proofs"]
+    Proofs["Proof Intake<br/>optional condition proofs"]
     Queue["Execution Queue<br/>idempotent jobs"]
     Builder["Transaction Builder<br/>execute_automation"]
     Sim["RPC Simulation<br/>fees / auth / tx data"]
@@ -1196,7 +1181,7 @@ flowchart LR
 Diagram explanation:
 
 - This diagram shows the relayer as a job processor for already-authorized automation.
-- The relayer scans schedules, receives proofs, queues idempotent jobs, builds transactions, simulates them, submits them, polls status, indexes events, and raises monitoring alerts.
+- The relayer scans schedules, queues idempotent jobs, builds transactions, simulates them, submits them, polls status, indexes events, and raises monitoring alerts. Optional proof intake can be added for proof-gated flows.
 - The feedback from indexing to scheduling helps prevent repeated attempts after a child execution has settled.
 
 Key takeaway: the relayer improves automation reliability but remains a submitter only; replay protection and execution authority remain onchain.
@@ -1264,13 +1249,10 @@ Session keys MUST be bounded, expiring, and non-escalating.
 |---|---|---|
 | `adapter_address` | `Address` | Contract address for the adapter |
 | `enabled` | `bool` | Whether the adapter can be used |
-| `adapter_type` | <code>payment &#124; swap &#124; yield &#124; split</code> | Adapter operation class |
+| `adapter_type` | <code>payment &#124; split</code> | V1 adapter operation class |
 | `max_single_execution_amount` | `i128` | Maximum amount per adapter execution |
 | `allowed_assets` | `Vec<Address>` | SAC assets allowed for this adapter |
-| `max_slippage_bps` | `u32` | Maximum swap slippage in basis points |
-| `allowed_yield_operations` | `u32` | Bitmap of approved yield operation types |
 | `max_split_recipients` | `u32` | Maximum recipients in one split |
-| `max_exposure_bps` | `u32` | Maximum strategy exposure in basis points |
 
 ### 11.5 AutomationCapability
 
@@ -1279,7 +1261,7 @@ Session keys MUST be bounded, expiring, and non-escalating.
 | `capability_id` | `BytesN<32>` | Stable capability identifier |
 | `parent_intent_id` | `BytesN<32>` | Parent intent that owns the capability |
 | `action` | `InteractiveAction` | Bounded action to execute |
-| `required_attestation_id` | `Option<BytesN<32>>` | Required condition proof, if any |
+| `required_attestation_id` | `Option<BytesN<32>>` | Optional extension field for proof-gated execution |
 | `policy_version` | `u32` | Policy version pinned at creation |
 | `executable_from_ledger` | `u32` | First eligible execution ledger |
 | `executable_until_ledger` | `u32` | Last eligible execution ledger |
@@ -1308,7 +1290,6 @@ stateDiagram-v2
     Draft --> Active: owner/admin approves
     Active --> Queued: execution window scheduled
     Queued --> Executable: window opens
-    Active --> Executable: condition satisfied
     Executable --> Executed: child execution settled
     Executable --> FailedTerminal: non-retryable failure
     Active --> Cancelled: owner/admin cancels
@@ -1325,10 +1306,10 @@ stateDiagram-v2
 Diagram explanation:
 
 - This state machine defines how intents and child executions move from creation to settlement.
-- Draft and Active states represent approved intent setup; Queued and Executable represent timing or condition eligibility; terminal states prevent ambiguous replay.
+- Draft and Active states represent approved intent setup; Queued and Executable represent timing eligibility; terminal states prevent ambiguous replay.
 - FailedTerminal is reserved for non-retryable failures, while missed windows can be skipped according to deterministic rules.
 
-Key takeaway: scheduled and conditional execution is controlled by explicit lifecycle state, not by relayer memory or offchain assumptions.
+Key takeaway: scheduled execution is controlled by explicit lifecycle state, not by relayer memory or offchain assumptions.
 
 Intent rules:
 
@@ -1344,7 +1325,7 @@ Intent rules:
 1. Deploy SmartAccount.
 2. Deploy PolicyEngine.
 3. Deploy IntentRegistry.
-4. Deploy ConditionVerifier.
+4. Deploy ConditionVerifier only when proof-gated execution is enabled.
 5. Deploy adapters.
 6. Initialize SmartAccount with subordinate contract addresses.
 7. Add primary signer.
@@ -1463,9 +1444,11 @@ Diagram explanation:
 
 Key takeaway: scheduled execution is relayer-triggered but onchain-authorized and replay-protected.
 
-### 12.5 Conditional Payment
+### 12.5 Optional Proof-Gated Payment Extension
 
-1. Admin creates capability requiring attestation ID.
+This workflow is an extension path for proof-gated payments. It is not required for the core scheduled payment launch flow.
+
+1. Admin creates a capability requiring an external proof.
 2. External condition occurs.
 3. Approved attestor signs proof.
 4. Relayer submits proof with `execute_automation`.
@@ -1493,7 +1476,7 @@ sequenceDiagram
     CV->>CV: Verify quorum, expiry, binding, replay
     CV-->>SA: Attestation consumed
     SA->>SA: Validate capability and policy
-    SA->>Adapter: Dispatch conditional payment
+    SA->>Adapter: Dispatch proof-gated payment
     Adapter->>SAC: transfer
     SAC-->>Adapter: Transfer result
     Adapter-->>SA: Adapter result
@@ -1502,11 +1485,11 @@ sequenceDiagram
 
 Diagram explanation:
 
-- This sequence shows an automation flow that requires an external condition proof.
+- This sequence shows an optional automation extension that requires an external condition proof.
 - The attestor signs a proof, the relayer submits it, and ConditionVerifier checks quorum, expiry, binding, and replay before SmartAccount dispatches the payment.
 - The proof and child execution are consumed so the same condition cannot be reused.
 
-Key takeaway: conditional payments depend on onchain proof verification, not on relayer trust or frontend state.
+Key takeaway: proof-gated payments depend on onchain proof verification, not on relayer trust or frontend state, and remain separate from the core scheduled payment flow.
 
 ### 12.6 Revenue Split
 
@@ -1568,7 +1551,7 @@ Constrained onchain modules:
 
 - PolicyEngine
 - IntentRegistry
-- ConditionVerifier
+- ConditionVerifier when proof-gated execution is enabled
 - approved adapters
 - approved SAC assets
 
@@ -1578,7 +1561,7 @@ Untrusted or semi-trusted offchain components:
 - relayer
 - RPC provider
 - indexer
-- attestor service until quorum verified onchain
+- attestor service until quorum verified onchain, when proof-gated execution is enabled
 - wallet UI display layer
 
 Critical rule: **Offchain components may prepare, submit, display, and monitor actions, but only onchain policy can authorize treasury movement.**
@@ -1593,7 +1576,7 @@ The following invariants MUST hold at all times:
 - A relayer cannot create or expand authority.
 - A stored automation cannot execute outside its capability envelope.
 - A child execution ID cannot be consumed twice.
-- A required attestation cannot be reused.
+- A required attestation cannot be reused when proof-gated execution is enabled.
 - A frozen account cannot execute normal treasury actions.
 - Recovery cannot reduce signer safety below configured thresholds.
 - Policy version changes cannot silently mutate previously created automation semantics.
@@ -1615,7 +1598,7 @@ The following matrix defines the security areas that require focused implementat
 | Adapter preauthorization | Adapter moves assets beyond the exact SmartAccount-approved action | Verify adapter ID, action type, asset, destination, amount, slippage, recipient list, and strategy parameters before dispatch |
 | Policy version pinning | A policy change silently changes previously approved automation behavior | Test policy-version mismatch, policy migration, and stale execution rejection |
 | Automation replay protection | Scheduled or recurring execution runs more than once for the same child execution ID | Test child execution consumption, terminal states, duplicate submissions, and retry behavior |
-| Attestation proof binding | A condition proof is reused across accounts, networks, capabilities, or verifier deployments | Verify domain, network passphrase, SmartAccount, verifier address, attestor set version, attestation ID, capability ID, payload hash, and expiry |
+| Attestation proof binding | A condition proof is reused across accounts, networks, capabilities, or verifier deployments | Required only when proof-gated execution is enabled: verify domain, network passphrase, SmartAccount, verifier address, attestor set version, attestation ID, capability ID, payload hash, and expiry |
 | Recovery transitions | Recovery bypasses normal controls or installs unsafe signer thresholds | Test freeze, pause, recovery initiation, cancellation, delay enforcement, finalization, and post-recovery threshold safety |
 | Pause and freeze controls | Normal execution remains possible during emergency states | Test every execution and management entrypoint while paused, frozen, or recovery-pending |
 | Storage TTL and archival | Critical signer, policy, intent, or replay state expires or becomes unavailable | Test TTL extension paths, restore handling, maintenance permissions, and prune maturity rules |
@@ -1631,7 +1614,7 @@ The implementation MUST include verification evidence for the security model.
 | Authorization | Unit and integration tests for `__check_auth`, signer binding, duplicate signatures, signer weights, and role thresholds |
 | Session scope | Tests proving sessions cannot exceed action, asset, destination, adapter, amount, expiry, or single-use limits |
 | Policy enforcement | Tests for asset allowlists, destination allowlists, adapter allowlists, policy version pinning, and failed-closed defaults |
-| Replay protection | Tests proving child execution IDs and attestation IDs cannot be reused |
+| Replay protection | Tests proving child execution IDs cannot be reused; attestation replay tests are required when proof-gated execution is enabled |
 | Adapter dispatch | Tests proving adapters only execute exact SmartAccount-preauthorized actions |
 | Recovery | Tests for pause, freeze, delayed recovery, cancellation, finalization, and threshold safety after signer replacement |
 | RPC and simulation | Integration tests for build, simulate, sign, assemble, submit, poll, and event decoding flows |
@@ -1642,7 +1625,7 @@ The implementation MUST include verification evidence for the security model.
 The audit baseline SHOULD include:
 
 - deterministic unit tests for each contract module
-- cross-contract integration tests for payment, split, scheduled execution, conditional execution, and recovery
+- cross-contract integration tests for payment, split, scheduled execution, and recovery
 - negative tests for all fail-closed paths
 - property or invariant tests for replay protection, thresholds, and cumulative caps
 - manual Stellar Lab reproduction steps for the critical flows
@@ -1654,7 +1637,7 @@ The audit baseline SHOULD include:
 | Relayer submits malicious action | Onchain policy validates exact action and relayer has no authority |
 | Session key abuse | Session scopes bind action type, assets, destinations, adapters, caps, and expiry |
 | Replay of scheduled execution | Child execution IDs are stored as consumed |
-| Replay of external condition | ConditionVerifier stores consumed attestation IDs |
+| Replay of external condition | Optional ConditionVerifier stores consumed attestation IDs when proof-gated execution is enabled |
 | Policy migration changes old automations | Automation capabilities pin policy version |
 | Adapter escape hatch | SmartAccount validates adapter type, enabled status, asset allowlist, and limits before dispatch |
 | Frozen account bypass | Execution entrypoints call active-state checks |
@@ -1724,7 +1707,7 @@ Events MUST be emitted for every security-significant action:
 - automation capability created or revoked
 - interactive execution succeeded
 - automation execution succeeded
-- attestation consumed
+- attestation consumed when proof-gated execution is enabled
 - account paused, unpaused, or frozen
 - recovery initiated, cancelled, or finalized
 - policy version changed
@@ -1755,15 +1738,15 @@ Persistent storage is required for:
 - child execution consumption
 - pending recovery plans
 - policy version
-- attestor approvals
-- consumed attestation IDs
+- attestor approvals when proof-gated execution is enabled
+- consumed attestation IDs when proof-gated execution is enabled
 
 Production requirements:
 
 - extend TTL on successful state-changing calls touching critical entries
 - provide explicit maintenance methods for TTL extension
 - monitor low TTL for signer state, recovery state, active intents, and replay records
-- define pruning rules for mature child execution and attestation records
+- define pruning rules for mature child execution records, plus attestation records when proof-gated execution is enabled
 - never prune records before deterministic replay-safety windows expire
 
 ### 16.1 TTL Maintenance Methods
@@ -1774,7 +1757,7 @@ Maintenance entrypoints:
 |---|---|
 | `extend_account_ttl(targets)` | Extend TTL for account-level critical state |
 | `extend_intent_ttl(parent_intent_id, child_range)` | Extend TTL for parent intent and selected child execution records |
-| `extend_attestation_ttl(attestation_ids)` | Extend TTL for consumed attestation records |
+| `extend_attestation_ttl(attestation_ids)` | Extend TTL for consumed attestation records when proof-gated execution is enabled |
 | `extend_policy_ttl()` | Extend TTL for policy and rule configuration |
 | `prune_replay_state(parent_intent_id, mature_range)` | Prune mature replay state after retention conditions are satisfied |
 
@@ -1798,7 +1781,7 @@ Critical TTL targets:
 | automation capabilities | extend on creation, execution, and maintenance |
 | parent intents | extend on lifecycle change, execution, and maintenance |
 | child execution replay records | retain until replay-retention window expires |
-| consumed attestation IDs | retain until attestation expiry plus retention buffer |
+| consumed attestation IDs | retain until attestation expiry plus retention buffer when proof-gated execution is enabled |
 | pending recovery plans | extend on recovery actions and maintenance |
 
 Operational thresholds:
@@ -1836,7 +1819,7 @@ Required local flow:
 
 1. Build contract WASM artifacts.
 2. Start a local Stellar Quickstart network.
-3. Deploy SmartAccount, PolicyEngine, IntentRegistry, ConditionVerifier, and adapters.
+3. Deploy SmartAccount, PolicyEngine, IntentRegistry, optional ConditionVerifier, and adapters.
 4. Resolve or deploy SAC contracts for local test assets.
 5. Initialize the STA contract suite.
 6. Write generated contract IDs into the local frontend and relayer environment.
@@ -1844,7 +1827,7 @@ Required local flow:
 
 ### 17.2 Testnet Deployment Target
 
-The testnet environment is the public validation target for the full architecture. It does not assume any predeployed contract on Stellar testnet; every contract ID is produced by a fresh or explicitly versioned deployment process.
+The testnet environment is the public validation target for the core launch architecture. It does not assume any predeployed contract on Stellar testnet; every contract ID is produced by a fresh or explicitly versioned deployment process.
 
 Required testnet flow:
 
@@ -1852,30 +1835,30 @@ Required testnet flow:
 2. Upload and deploy SmartAccount.
 3. Upload and deploy PolicyEngine.
 4. Upload and deploy IntentRegistry.
-5. Upload and deploy ConditionVerifier.
+5. Upload and deploy ConditionVerifier only when proof-gated execution is enabled.
 6. Upload and deploy adapters.
 7. Deploy or resolve SAC contracts for test assets.
 8. Initialize contracts.
 9. Configure signer set, policies, adapters, and allowlists.
 10. Fund SmartAccount.
-11. Execute payment, split, automation, and conditional demos.
+11. Execute payment, split, and scheduled payment demos.
 12. Publish contract IDs, WASM hashes, network passphrase, and reproducible demo instructions.
 
 ### 17.3 Mainnet Deployment Requirements
 
-Mainnet deployment has independent artifact, security, and operations requirements. It does not inherit contract IDs from local or testnet. Mainnet uses separately deployed and audited artifacts.
+Mainnet deployment has independent artifact, security, and operations requirements. It does not inherit contract IDs from local or testnet. Mainnet uses separately deployed, versioned, and release-verified artifacts.
 
 Mainnet requirements:
 
 - finalized IntentRegistry lifecycle and replay-state implementation
 - finalized PolicyEngine rule set for supported V1 actions
-- hardened adapters for real venues and strategies
+- finalized transfer and split adapters for supported V1 actions
 - implemented TTL maintenance and monitoring
 - reproducible deployment scripts for all contracts and environment files
 - event indexing and audit-log exports
 - frontend policy review screens for every signing flow
 - relayer monitoring, alerting, and incident runbooks
-- independent audit of the deployed contract artifacts
+- release verification package for deployed contract artifacts
 - full testnet rehearsal using production-like configuration
 
 ### 17.4 Deployment Topology
@@ -1900,7 +1883,7 @@ flowchart TB
     end
 
     subgraph Prod["Mainnet Deployment Requirements"]
-        Audit["Independent audit"]
+        Audit["Release verification"]
         Runbooks["Deployment runbooks"]
         MainnetDeploy["Controlled mainnet deployment"]
         Monitoring["Monitoring and alerts"]
@@ -1926,7 +1909,7 @@ Diagram explanation:
 
 - This topology shows how the same architecture moves through local validation, Stellar testnet validation, and mainnet deployment requirements.
 - Local deployment produces local contract IDs and environment configuration; testnet deployment produces independently versioned contract IDs and public validation artifacts.
-- Mainnet deployment is separate from testnet and requires audited artifacts, deployment runbooks, controlled deployment, and monitoring.
+- Mainnet deployment is separate from testnet and requires release-verified artifacts, deployment runbooks, controlled deployment, and monitoring.
 
 Key takeaway: local, testnet, and mainnet are independent deployment targets; contract IDs, environment files, and operational controls must be versioned per environment.
 
@@ -1935,7 +1918,7 @@ Deployment controls:
 - Local, testnet, and mainnet each have independent contract IDs and environment files.
 - Testnet contract IDs MUST be published with network passphrase and WASM hashes.
 - Admin initialization MUST be reproducible from deployment scripts.
-- Mainnet deployment MUST use audited WASM artifacts only.
+- Mainnet deployment MUST use versioned and release-verified WASM artifacts only.
 - Contract addresses, policy versions, and adapter IDs MUST be versioned in the frontend environment config.
 
 ## 18. Implementation Units
@@ -1943,7 +1926,7 @@ Deployment controls:
 Required engineering units:
 
 1. Add Scaffold Stellar app package.
-2. Generate clients for SmartAccount, PolicyEngine, ConditionVerifier, IntentRegistry, and adapters.
+2. Generate clients for SmartAccount, PolicyEngine, IntentRegistry, adapters, and optional ConditionVerifier.
 3. Implement Wallets Kit connection with Freighter and xBull priority.
 4. Implement `simulateAndSign` utility around Stellar RPC.
 5. Build SmartAccount setup flow.
@@ -1951,7 +1934,7 @@ Required engineering units:
 7. Build asset, adapter, and destination configuration UI.
 8. Build payment execution UI.
 9. Build split execution UI.
-10. Build automation creation UI.
+10. Build scheduled payment creation UI.
 11. Build relayer execution endpoint.
 12. Complete IntentRegistry lifecycle.
 13. Expand PolicyEngine.
@@ -1982,7 +1965,7 @@ Required engineering units:
 - Session keys are scoped, expiring, and capped.
 - Automation capabilities pin policy version and execution window.
 - Child execution IDs are unique and replay protected.
-- Attestation IDs are unique and replay protected.
+- Attestation IDs are unique and replay protected when proof-gated execution is enabled.
 - Recovery freezes normal execution.
 - Signer removal cannot break configured thresholds.
 - Policy changes emit events and preserve automation semantics.
@@ -1998,7 +1981,7 @@ The security model is intentionally conservative:
 - Relayers are untrusted submitters.
 - Assets and adapters are allowlisted.
 - Automation is stored as bounded onchain capability.
-- External conditions require verifier quorum.
+- External conditions require verifier quorum when proof-gated execution is enabled.
 - Recovery is separated from daily spend authority.
 
 This makes STA suitable for treasury, payroll, vendor payment, marketplace payout, revenue distribution, DAO treasury, and tokenization platform workflows on Stellar.
