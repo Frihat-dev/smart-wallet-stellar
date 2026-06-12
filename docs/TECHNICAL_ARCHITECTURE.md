@@ -4,7 +4,7 @@
 
 This document defines the technical architecture for Smart Treasury Account (STA), a Soroban-native programmable treasury wallet for Stellar.
 
-It is written for Stellar Community Fund review, implementation planning, and security review. It describes how STA integrates with Stellar, how the onchain contracts are composed, how wallet and relayer flows work, and which invariants must be enforced before testnet and mainnet release.
+It describes how STA integrates with Stellar, how the onchain contracts are composed, how wallet and relayer flows work, and which invariants must be enforced before testnet and mainnet release.
 
 ## 2. Executive Summary
 
@@ -25,11 +25,45 @@ The target product supports:
 
 The first production path is a testnet PoC using:
 
-- Rust/Soroban contracts from this repository
+- Rust/Soroban smart contracts
 - Scaffold Stellar for the frontend and generated TypeScript client layer
 - Stellar Wallets Kit for Freighter and xBull connection/signing
 - Stellar RPC simulation and submission
 - Stellar Lab for manual deployment, invocation, and XDR debugging
+
+## 2.1 General Presentation
+
+STA is designed for organizations that need programmable treasury operations without handing custody or broad authority to an external operator. The account itself is the control point: it holds assets, stores policy, validates signers, and rejects execution outside the configured treasury rules.
+
+Typical users:
+
+- companies managing stablecoin payroll and vendor payments
+- payment providers and marketplaces handling payout rules
+- tokenization platforms distributing proceeds or fees
+- DAOs and protocol treasuries enforcing spending controls
+- treasury teams that need recurring, conditional, or split payments
+
+Core idea:
+
+```text
+User intent + onchain policy + bounded execution = programmable treasury control
+```
+
+STA separates five concerns:
+
+- authorization: who can approve or operate the account
+- policy: what assets, recipients, limits, timing rules, and adapters are allowed
+- intent lifecycle: which future actions have been approved and when they can execute
+- execution: how approved transfers, splits, swaps, and yield actions are carried out
+- recovery: how compromised or lost authority can be frozen and restored safely
+
+The architecture is intentionally conservative:
+
+- no arbitrary contract execution in v1
+- SAC-only assets in v1
+- relayers are submitters, not authorities
+- adapters are narrow and allowlisted
+- every recurring or conditional action is bounded by explicit onchain state
 
 ## 3. External Stellar References
 
@@ -65,7 +99,7 @@ This document follows a layered architecture format:
 6. Security architecture: trust boundaries, invariants, audit areas, and operational controls.
 7. Deployment architecture: local, testnet, and mainnet readiness.
 
-Diagrams use Mermaid so they render directly in GitHub and can be linked from the SCF submission.
+Diagrams use Mermaid so they render directly in GitHub.
 
 ## 3.2 Diagram Index
 
@@ -78,42 +112,10 @@ Diagrams use Mermaid so they render directly in GitHub and can be linked from th
 - Intent state machine: Section 11.7
 - Execution sequence diagrams: Section 12
 - Deployment topology: Section 17.4
-- Build roadmap: Section 19.7
 
-## 4. Repository Baseline
+## 4. Architecture Decisions
 
-Current workspace:
-
-```text
-contracts/
-  smart_account/
-  intent_registry/
-  policy_engine/
-  condition_verifier/
-  recovery_manager/
-  adapters/
-    transfer_adapter/
-    split_adapter/
-    swap_adapter/
-    yield_adapter/
-shared/
-  auth/
-  errors/
-  events/
-  testutils/
-  types/
-```
-
-Initial progress:
-
-- selected SmartAccount authorization, session-key, adapter, automation, and recovery controls have been prototyped
-- selected ConditionVerifier attestor quorum and replay checks have been prototyped
-- the Rust/Soroban workspace and shared type system are already started
-- the remaining grant work focuses on completing the target architecture, testnet PoC, wallet integration, relayer flow, and production hardening
-
-## 4.1 Architecture Decisions for SCF Build
-
-The following decisions remove ambiguity for the grant build plan.
+The following decisions remove ambiguity for implementation.
 
 ### Decision 1: Wallet-first PoC, passkey-capable production architecture
 
@@ -125,11 +127,11 @@ STA will use a staged signer strategy:
 
 This is the best tradeoff because it lets the project demonstrate Stellar-native treasury flows immediately with existing wallets while preserving the stronger long-term UX promised by contract accounts.
 
-### Decision 2: IntentRegistry is a grant deliverable, not optional future work
+### Decision 2: IntentRegistry is a core module, not optional future work
 
 The current SmartAccount-local automation capability storage is acceptable as an initial implementation shortcut, but the target architecture requires `IntentRegistry`.
 
-`IntentRegistry` is part of the grant build because recurring treasury workflows need:
+`IntentRegistry` is part of the core architecture because recurring treasury workflows need:
 
 - parent intent lifecycle
 - child execution materialization
@@ -155,7 +157,7 @@ The relayer will:
 - poll transaction status
 - index execution results
 
-OpenZeppelin Relayer or another managed relayer may be evaluated later, but it should not be a dependency for the first grant deliverable. A custom relayer gives the team full visibility into Soroban simulation, auth handling, transaction assembly, retries, and replay failure modes during the most important security-hardening phase.
+OpenZeppelin Relayer or another managed relayer may be evaluated later, but it should not be a dependency for the first implementation phase. A custom relayer gives the team full visibility into Soroban simulation, auth handling, transaction assembly, retries, and replay failure modes during the most important security-hardening phase.
 
 Current tests cover:
 
@@ -281,7 +283,7 @@ revoke_session_key(signer_id)
 set_asset_config(asset, config)
 set_adapter_config(adapter_id, config)
 set_destination_allowed(destination, allowed)
-grant_automation_capability(capability)
+create_automation_capability(capability)
 revoke_automation_capability(capability_id)
 execute_interactive(action, expected_policy_version, signer_id)
 execute_automation(capability_id, child_execution_id, attestation_proof)
@@ -586,7 +588,7 @@ Wallet compatibility rule:
 
 - The PoC must support the simplest wallet path that works reliably with Freighter and xBull: user wallet signs the Soroban transaction/auth material, while SmartAccount signer records bind the wallet public key.
 - If a wallet cannot expose the required auth-entry signing path for a specific SmartAccount flow, the PoC falls back to wallet-authorized creation of a scoped session key and uses that session key for bounded execution.
-- No fallback may grant broader authority than the user-approved session scope.
+- No fallback may give broader authority than the user-approved session scope.
 
 ### 8.4 Frontend Signing Flow
 
@@ -754,7 +756,7 @@ Generated client responsibilities:
 - call simulation before wallet signing
 - decode result XDR and error codes for UI display
 
-Frontend integration milestones:
+Frontend integration steps:
 
 1. Initialize Scaffold Stellar app.
 2. Add Wallets Kit connection and network state.
@@ -797,7 +799,7 @@ Frontend safety requirements:
 
 ### 9.3 Stellar Lab PoC
 
-Stellar Lab will be used for early PoC validation and grant demos.
+Stellar Lab will be used for early PoC validation and demos.
 
 Lab usage:
 
@@ -810,7 +812,7 @@ Lab usage:
 - inspect failed transaction metadata
 - share saved API requests and transaction examples
 
-The Lab flow is useful for reviewers because it provides a reproducible, browser-based way to inspect the contract behavior before a complete frontend is finished.
+The Lab flow provides a reproducible, browser-based way to inspect contract behavior before a complete frontend is finished.
 
 ## 10. Offchain Services
 
@@ -840,7 +842,7 @@ The relayer cannot:
 Relayer implementation path:
 
 - first PoC: custom Node.js service using Stellar SDK and RPC
-- grant hardening: hosted worker with queue, retry logic, execution locks, and monitoring
+- production hardening: hosted worker with queue, retry logic, execution locks, and monitoring
 - later evaluation: OpenZeppelin Relayer or another managed relayer, only if it preserves the same no-authority trust boundary
 
 ### 10.2 Attestor Service
@@ -851,7 +853,7 @@ Examples:
 
 - invoice approved
 - shipment delivered
-- milestone accepted
+- deliverable accepted
 - compliance approval received
 - marketplace payout window closed
 
@@ -888,7 +890,7 @@ StaConditionAttestationV1 {
 
 Attestation rules:
 
-- `condition_payload_hash` must commit to the business fact being attested, such as invoice ID, milestone ID, payer/payee, amount, asset, and approval metadata hash.
+- `condition_payload_hash` must commit to the business fact being attested, such as invoice ID, deliverable ID, payer/payee, amount, asset, and approval metadata hash.
 - `attestor_set_version` prevents proofs from an old attestor set from being replayed after governance changes.
 - `network_passphrase` prevents cross-network replay.
 - The verifier contract address prevents reuse across verifier deployments.
@@ -1169,7 +1171,7 @@ sequenceDiagram
     participant Adapter as Transfer/Split Adapter
 
     Admin->>App: Create scheduled payment policy
-    App->>SA: grant_automation_capability
+    App->>SA: create_automation_capability
     SA->>IR: Register parent intent
     IR-->>SA: Intent active
     Relayer->>IR: Read eligible execution window
@@ -1606,99 +1608,7 @@ Deployment controls:
 - Mainnet deployment must use audited WASM artifacts only.
 - Contract addresses, policy versions, and adapter IDs must be versioned in the frontend environment config.
 
-## 18. PoC Acceptance Criteria
-
-The PoC is complete when reviewers can verify:
-
-- a SmartAccount can be deployed and initialized on Stellar testnet
-- Freighter and xBull can connect through Wallets Kit
-- a signer can create or approve a treasury action
-- the app simulates before signing
-- a SAC asset can be configured and transferred from SmartAccount
-- an approved destination payment succeeds
-- an unapproved destination payment fails
-- a scoped session key can execute only inside scope
-- a split action distributes funds to multiple approved recipients
-- a stored automation can execute once per child ID
-- a duplicate child execution fails
-- a conditional execution succeeds with valid attestation proof
-- pause or freeze blocks normal execution
-- events can be inspected in Lab or the app
-
-## 19. Implementation Roadmap
-
-### Phase 1: Frontend and Wallet PoC
-
-- Initialize Scaffold Stellar frontend.
-- Add Wallets Kit integration.
-- Prioritize Freighter and xBull.
-- Add network selector for local and testnet.
-- Generate TypeScript clients for current contracts.
-- Add transaction simulation and signing utilities.
-- Build SmartAccount dashboard.
-
-### Phase 2: SmartAccount MVP Hardening
-
-- Implement wallet Ed25519 signer flow first, then complete the passkey/P256 compatibility spike.
-- Add TTL extension helpers.
-- Add event schema consistency.
-- Add deployment scripts.
-- Add integration tests for full contract deployment sequence.
-
-### Phase 3: IntentRegistry Completion
-
-- Implement parent intent lifecycle.
-- Implement child execution records.
-- Implement atomic consume and settle flow.
-- Add pruning and retention rules.
-- Integrate SmartAccount with registry state.
-
-### Phase 4: PolicyEngine Expansion
-
-- Add destination and amount policy tables.
-- Add daily/rolling outflow windows.
-- Add policy signer escalation for high-risk actions.
-- Add policy migration and pinning tests.
-
-### Phase 5: Relayer and Conditional Flows
-
-- Build custom minimal Node.js relayer worker.
-- Add schedule scanner.
-- Add attestation ingestion.
-- Add execution queue.
-- Add retry and terminal failure handling.
-- Add dashboard reconciliation.
-
-### Phase 6: Testnet Demo and Audit Package
-
-- Deploy all contracts to testnet.
-- Publish contract addresses.
-- Publish demo instructions.
-- Freeze contract interfaces.
-- Prepare audit checklist.
-- Run external review.
-
-### 19.7 Build Roadmap Diagram
-
-```mermaid
-flowchart LR
-    A["Acceptance<br/>baseline, scope, test plan"]
-    B["Frontend + Wallet PoC<br/>Scaffold Stellar, Wallets Kit"]
-    C["SmartAccount Hardening<br/>signers, sessions, TTL, recovery"]
-    D["Intent + Policy Engine<br/>parent/child lifecycle, limits"]
-    E["Relayer + Conditions<br/>custom worker, attestations"]
-    F["Testnet Demo<br/>deployment, wallet demo, Lab examples"]
-    G["Audit Readiness<br/>interface freeze, runbooks, review"]
-
-    A --> B
-    A --> C
-    C --> D
-    D --> E
-    E --> F
-    F --> G
-```
-
-## 20. Build-Ready Task Breakdown
+## 18. Build-Ready Task Breakdown
 
 Immediate engineering tasks:
 
@@ -1718,7 +1628,7 @@ Immediate engineering tasks:
 14. Add testnet deployment scripts.
 15. Add event indexing and audit log view.
 
-## 21. Architecture Review Checklist
+## 19. Architecture Control Checklist
 
 ### Stellar Integration Checklist
 
@@ -1746,20 +1656,7 @@ Immediate engineering tasks:
 - Policy changes emit events and preserve automation semantics.
 - Critical storage has TTL maintenance and monitoring.
 
-### Grant Reviewer Evidence Checklist
-
-- Public repository link.
-- Technical architecture link.
-- Testnet deployment instructions.
-- Contract IDs for testnet demo.
-- Wallet demo with Freighter and xBull.
-- Lab invocation examples or saved requests.
-- Passing test suite.
-- Relayer demo logs showing simulation before submission.
-- Event/audit trail for successful and rejected execution.
-- Clear list of implemented, in-progress, and future hardening items in the milestone report.
-
-## 22. Conclusion
+## 20. Conclusion
 
 STA is immediately buildable on Stellar because the core account architecture maps directly to Soroban contract accounts, SAC token flows, Wallets Kit signing, RPC simulation, and Lab-based testing.
 
