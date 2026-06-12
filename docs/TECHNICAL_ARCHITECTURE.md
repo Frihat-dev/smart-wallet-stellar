@@ -1,4 +1,4 @@
-# Smart Treasury Account Technical Architecture
+# Smart Treasury Account "STA" Technical Architecture
 
 | Field | Specification |
 |---|---|
