@@ -125,6 +125,14 @@ flowchart LR
     Recovery --> Audit
 ```
 
+Diagram explanation:
+
+- This diagram shows the product from the treasury user perspective, before introducing implementation modules.
+- The user starts with wallet access, configures the treasury account, applies policy controls, and then uses payments, splits, automation, and recovery services.
+- All user-facing services produce an audit trail so operational activity can be reviewed after execution.
+
+Key takeaway: STA is not only a payment contract; it is a treasury control system combining wallet access, policy enforcement, automation, recovery, and auditability.
+
 User-facing service model:
 
 | Service | User Value | Technical Enforcement |
@@ -212,9 +220,9 @@ Diagrams use Mermaid so they render directly in GitHub. Tables define authority,
 
 ### 3.2 Diagram Index
 
+- User-facing features and services: Section 2.2
 - System context: Section 5.1
 - Trust boundary: Sections 5.2 and 13.1
-- User-facing features and services: Section 2.2
 - Onchain contract topology: Section 6.7
 - Main smart contract interactions: Section 6.8
 - Wallet signing and simulation: Section 8.5
@@ -321,6 +329,14 @@ flowchart LR
     STA -->|"authorized token calls"| SAC
 ```
 
+Diagram explanation:
+
+- This diagram shows the external systems that interact with STA and where Stellar infrastructure sits in the architecture.
+- Treasury users interact through a wallet and web app; relayers and attestors support automation but do not receive authority over funds.
+- All execution reaches the SmartAccount through Stellar RPC and Soroban, and asset movement is routed through SAC contracts.
+
+Key takeaway: user wallets, relayers, attestors, RPC, and Lab are integration surfaces, while SmartAccount and SAC are the onchain enforcement and asset layers.
+
 ### 5.2 Trust Boundary Diagram
 
 ```mermaid
@@ -351,6 +367,14 @@ flowchart LR
     SA --> ADAPTERS
     ADAPTERS --> SAC
 ```
+
+Diagram explanation:
+
+- This diagram separates offchain components from onchain enforcement components.
+- Offchain components can prepare, sign, submit, attest, index, and display actions, but they cannot decide whether treasury movement is valid.
+- Onchain contracts enforce signer authority, policy, intent replay protection, attestation validity, adapter constraints, and asset movement.
+
+Key takeaway: the relayer, RPC provider, indexer, frontend, and attestor services are outside the authority boundary; treasury movement is authorized only by onchain policy.
 
 Diagram zones:
 
@@ -554,6 +578,15 @@ flowchart TB
     class SAC asset;
 ```
 
+Diagram explanation:
+
+- This diagram shows the full onchain module topology around SmartAccount.
+- SmartAccount is the root authority and coordinates policy validation, intent state, condition verification, recovery hooks, and adapter dispatch.
+- Adapters are placed below SmartAccount because they execute only after SmartAccount has preauthorized an exact action.
+- SAC sits at the bottom because all V1 asset movement uses Stellar Asset Contracts.
+
+Key takeaway: subordinate modules and adapters extend SmartAccount behavior, but none of them independently own treasury authority.
+
 Contract topology rules:
 
 - SmartAccount stores or resolves the canonical addresses for subordinate contracts.
@@ -591,6 +624,14 @@ flowchart LR
     SWAP --> SAC
     YIELD --> SAC
 ```
+
+Diagram explanation:
+
+- This diagram focuses only on contract-to-contract calls.
+- SmartAccount is the caller that coordinates every security-sensitive module interaction.
+- PolicyEngine validates rules, IntentRegistry owns automation lifecycle and replay state, ConditionVerifier verifies external proofs, and adapters perform narrow execution against SAC.
+
+Key takeaway: contract interactions are intentionally hub-and-spoke around SmartAccount to keep treasury authorization centralized and auditable.
 
 Interaction rules:
 
@@ -842,6 +883,14 @@ sequenceDiagram
     App-->>User: Execution result and audit trail
 ```
 
+Diagram explanation:
+
+- This sequence shows the safe order for wallet-driven execution.
+- The app loads state, builds the Soroban invocation, simulates it, requests wallet approval, submits the signed transaction, and then displays the confirmed event-derived result.
+- Simulation happens before signing so the user can review expected authorization requirements, fees, and transaction data.
+
+Key takeaway: the user signs only after the action has been built and simulated; final execution still depends on SmartAccount authorization and policy validation.
+
 Signing rule:
 
 - The app MUST simulate before signing.
@@ -970,6 +1019,14 @@ flowchart TB
     RPCSvc --> State
     Human --> Tx
 ```
+
+Diagram explanation:
+
+- This diagram shows the frontend modules needed for a safe treasury application.
+- UI pages do not submit directly; they depend on generated contract clients, transaction services, wallet adapters, RPC services, and human-readable review summaries.
+- The human-readable review component is part of the architecture because users must understand asset, amount, destination, adapter, signer, expiry, and policy version before signing.
+
+Key takeaway: the frontend is a safety layer as well as a user interface; it must make contract actions understandable before wallet approval.
 
 Frontend safety requirements:
 
@@ -1122,6 +1179,14 @@ flowchart LR
     Index --> Scheduler
 ```
 
+Diagram explanation:
+
+- This diagram shows the relayer as a job processor for already-authorized automation.
+- The relayer scans schedules, receives proofs, queues idempotent jobs, builds transactions, simulates them, submits them, polls status, indexes events, and raises monitoring alerts.
+- The feedback from indexing to scheduling helps prevent repeated attempts after a child execution has settled.
+
+Key takeaway: the relayer improves automation reliability but remains a submitter only; replay protection and execution authority remain onchain.
+
 Relayer safety requirements:
 
 - Every job MUST be idempotent by `child_execution_id`.
@@ -1243,6 +1308,14 @@ stateDiagram-v2
     FailedTerminal --> [*]
 ```
 
+Diagram explanation:
+
+- This state machine defines how intents and child executions move from creation to settlement.
+- Draft and Active states represent approved intent setup; Queued and Executable represent timing or condition eligibility; terminal states prevent ambiguous replay.
+- FailedTerminal is reserved for non-retryable failures, while missed windows can be skipped according to deterministic rules.
+
+Key takeaway: scheduled and conditional execution is controlled by explicit lifecycle state, not by relayer memory or offchain assumptions.
+
 Intent rules:
 
 - Terminal states are `Executed`, `Cancelled`, `Expired`, and `FailedTerminal`.
@@ -1310,6 +1383,14 @@ sequenceDiagram
     RPC-->>App: Confirmed result
 ```
 
+Diagram explanation:
+
+- This sequence shows an immediate SAC payment initiated by a treasury user.
+- The app simulates before requesting wallet signature; SmartAccount then validates signer authority, policy version, asset, destination, adapter, and amount before dispatching to TransferAdapter.
+- TransferAdapter performs the SAC transfer only after SmartAccount authorization.
+
+Key takeaway: even a simple vendor payment passes through signer validation, policy validation, adapter authorization, and SAC execution.
+
 ### 12.3 Scoped Session Key
 
 1. Admin creates session key record.
@@ -1360,6 +1441,14 @@ sequenceDiagram
     SA-->>RPC: Emit automation event
 ```
 
+Diagram explanation:
+
+- This sequence shows scheduled execution after a bounded automation capability has been created.
+- The relayer reads an eligible child execution, simulates the automation call, and submits it, but SmartAccount and IntentRegistry decide whether the child execution is valid and unused.
+- IntentRegistry records settlement so the same child execution cannot be replayed.
+
+Key takeaway: scheduled execution is relayer-triggered but onchain-authorized and replay-protected.
+
 ### 12.5 Conditional Payment
 
 1. Admin creates capability requiring attestation ID.
@@ -1396,6 +1485,14 @@ sequenceDiagram
     Adapter-->>SA: Adapter result
     SA-->>RPC: Emit automation event
 ```
+
+Diagram explanation:
+
+- This sequence shows an automation flow that requires an external condition proof.
+- The attestor signs a proof, the relayer submits it, and ConditionVerifier checks quorum, expiry, binding, and replay before SmartAccount dispatches the payment.
+- The proof and child execution are consumed so the same condition cannot be reused.
+
+Key takeaway: conditional payments depend on onchain proof verification, not on relayer trust or frontend state.
 
 ### 12.6 Revenue Split
 
@@ -1436,6 +1533,14 @@ sequenceDiagram
     SA->>SA: Increment policy version
     SA-->>Admin: Account recovered and unfrozen
 ```
+
+Diagram explanation:
+
+- This sequence shows emergency recovery after freeze.
+- Normal execution is blocked first, then a delayed recovery plan is initiated, verified, finalized, and applied.
+- Old signers and sessions are cleared before new authority is installed and the policy version increments.
+
+Key takeaway: recovery is intentionally slower and stricter than normal spend flows because it can replace account authority.
 
 ## 13. Security Architecture
 
@@ -1802,6 +1907,14 @@ flowchart TB
     Runbooks --> MainnetDeploy
     MainnetDeploy --> Monitoring
 ```
+
+Diagram explanation:
+
+- This topology shows how the same architecture moves through local validation, Stellar testnet validation, and mainnet deployment requirements.
+- Local deployment produces local contract IDs and environment configuration; testnet deployment produces independently versioned contract IDs and public validation artifacts.
+- Mainnet deployment is separate from testnet and requires audited artifacts, deployment runbooks, controlled deployment, and monitoring.
+
+Key takeaway: local, testnet, and mainnet are independent deployment targets; contract IDs, environment files, and operational controls must be versioned per environment.
 
 Deployment controls:
 
