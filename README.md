@@ -35,6 +35,12 @@ The system is designed around deterministic onchain controls, passkey-first UX, 
 - [Payloads, Events, and Errors](./docs/08-payloads-events-errors.md)
 - [State Machines and Storage Keys](./docs/09-state-machines-and-storage-keys.md)
 - [Rust Layout and Test Matrix](./docs/10-rust-layout-and-test-matrix.md)
+- [Technical Architecture](./docs/TECHNICAL_ARCHITECTURE.md)
+- [SCF Grant Application](./docs/GRANT_APPLICATION.md)
+- [SCF Form Responses](./docs/GRANT_FORM_RESPONSES.md)
+- [SCF Milestones and Budget](./docs/GRANT_MILESTONES_BUDGET.md)
+- [SCF Technical Specification](./docs/GRANT_TECHNICAL_SPEC.md)
+- [SCF Submission Checklist](./docs/SCF_SUBMISSION_CHECKLIST.md)
 
 ## Initial Scope
 
