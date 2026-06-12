@@ -96,7 +96,50 @@ The architecture is intentionally conservative:
 - adapters are narrow and allowlisted
 - every recurring or conditional action is bounded by explicit onchain state
 
-### 2.2 Functional Scope
+### 2.2 User-Facing Features and Services
+
+The following diagram presents STA from the user perspective before the document introduces the contract internals.
+
+```mermaid
+flowchart LR
+    User["Treasury user"]
+    Wallet["Wallet access<br/>Freighter or xBull"]
+    Setup["Treasury setup<br/>signers, roles, thresholds"]
+    Policy["Policy controls<br/>assets, recipients, limits"]
+    Payments["Payments<br/>vendor and payroll transfers"]
+    Splits["Revenue splits<br/>multi-recipient payouts"]
+    Automation["Automation<br/>scheduled and conditional actions"]
+    Recovery["Recovery controls<br/>pause, freeze, guardians"]
+    Audit["Audit trail<br/>events, status, exports"]
+
+    User --> Wallet
+    Wallet --> Setup
+    Setup --> Policy
+    Policy --> Payments
+    Policy --> Splits
+    Policy --> Automation
+    Setup --> Recovery
+    Payments --> Audit
+    Splits --> Audit
+    Automation --> Audit
+    Recovery --> Audit
+```
+
+User-facing service model:
+
+| Service | User Value | Technical Enforcement |
+|---|---|---|
+| Wallet onboarding | Connect with familiar Stellar wallets | Wallets Kit, Freighter/xBull signing, SmartAccount signer records |
+| Treasury setup | Define who can operate the account | signer roles, weights, thresholds, policy version |
+| Policy controls | Restrict where assets can move | SAC allowlists, destination allowlists, adapter allowlists, spending caps |
+| Immediate payments | Pay vendors, payroll, or operational recipients | `execute_interactive`, PolicyEngine, TransferAdapter |
+| Revenue splits | Distribute one inflow across multiple recipients | SplitAdapter and per-recipient validation |
+| Scheduled execution | Run recurring treasury operations | IntentRegistry child execution IDs and relayer submission |
+| Conditional execution | Pay only after an external condition is proven | ConditionVerifier attestor quorum and replay protection |
+| Recovery and freeze | Restore control after key loss or compromise | pause, freeze, guardian threshold, delayed recovery |
+| Audit and monitoring | Reconstruct every security-significant action | events, replay records, indexer, dashboards |
+
+### 2.3 Functional Scope
 
 V1 supports the following protocol capabilities:
 
@@ -113,7 +156,7 @@ V1 supports the following protocol capabilities:
 | Conditional execution | Require attestor quorum before action execution | SmartAccount, ConditionVerifier |
 | Recovery | Freeze, delay, replace signers, and restore safe operation | SmartAccount |
 
-### 2.3 Non-Goals and Boundaries
+### 2.4 Non-Goals and Boundaries
 
 V1 intentionally excludes:
 
@@ -125,7 +168,7 @@ V1 intentionally excludes:
 - policy changes that silently mutate previously created automation semantics
 - unbounded session keys or unbounded automation capabilities
 
-### 2.4 Protocol Actors and Authority Model
+### 2.5 Protocol Actors and Authority Model
 
 | Actor | Authority | Explicit Limitation |
 |---|---|---|
@@ -138,7 +181,7 @@ V1 intentionally excludes:
 | Indexer | Reads events and builds audit views | Cannot be used as execution truth |
 | RPC provider | Provides transport, simulation, submission, and transaction status | Cannot be treated as an authority source |
 
-### 2.5 Component Responsibility Matrix
+### 2.6 Component Responsibility Matrix
 
 | Component | Primary Responsibility | Must Not Do |
 |---|---|---|
@@ -171,7 +214,9 @@ Diagrams use Mermaid so they render directly in GitHub. Tables define authority,
 
 - System context: Section 5.1
 - Trust boundary: Sections 5.2 and 13.1
+- User-facing features and services: Section 2.2
 - Onchain contract topology: Section 6.7
+- Main smart contract interactions: Section 6.8
 - Wallet signing and simulation: Section 8.5
 - Frontend module architecture: Section 9.2
 - Relayer architecture: Section 10.4
@@ -516,7 +561,60 @@ Contract topology rules:
 - Adapters MUST only execute after SmartAccount authorization.
 - SAC contracts are the only supported asset interface in v1.
 
-### 6.8 Contract Governance and Replacement Rules
+### 6.8 Main Smart Contract Interactions
+
+This diagram focuses only on the onchain contract-to-contract interactions. Offchain wallets, relayers, and indexers are intentionally excluded here.
+
+```mermaid
+flowchart LR
+    SA["SmartAccount"]
+    PE["PolicyEngine"]
+    IR["IntentRegistry"]
+    CV["ConditionVerifier"]
+    RM["RecoveryManager"]
+    TRANSFER["TransferAdapter"]
+    SPLIT["SplitAdapter"]
+    SWAP["SwapAdapter"]
+    YIELD["YieldAdapter"]
+    SAC["Stellar Asset Contracts"]
+
+    SA --> PE
+    SA --> IR
+    SA --> CV
+    SA --> RM
+    SA --> TRANSFER
+    SA --> SPLIT
+    SA --> SWAP
+    SA --> YIELD
+    TRANSFER --> SAC
+    SPLIT --> SAC
+    SWAP --> SAC
+    YIELD --> SAC
+```
+
+Interaction rules:
+
+| Interaction | Trigger | Security Rule |
+|---|---|---|
+| `SmartAccount -> PolicyEngine` | interactive execution, automation execution, policy-sensitive management | Policy version and rule scope MUST be validated before execution |
+| `SmartAccount -> IntentRegistry` | automation creation, child execution consumption, cancellation, expiry | Intent lifecycle and replay state MUST be canonical in IntentRegistry |
+| `SmartAccount -> ConditionVerifier` | conditional execution requiring an external proof | Attestor quorum, freshness, domain binding, and attestation replay MUST be verified before execution |
+| `SmartAccount -> RecoveryManager` | optional recovery orchestration | Recovery hooks MUST NOT bypass freeze, delay, or quorum rules |
+| `SmartAccount -> adapters` | approved payment, split, swap, or yield action | Adapters MUST receive exact preauthorized action payloads only |
+| `Adapters -> SAC` | token transfer, split transfer, approved route, approved strategy | SAC calls MUST use approved assets and SmartAccount-authorized sub-invocations |
+
+Execution ownership:
+
+| Component | Owns | Does Not Own |
+|---|---|---|
+| SmartAccount | signer authority, root execution decision, adapter dispatch | external condition truth, independent token movement outside SAC |
+| PolicyEngine | policy validation and risk rules | signer authority or funds |
+| IntentRegistry | intent lifecycle and child execution replay state | treasury execution authority |
+| ConditionVerifier | attestor verification and attestation replay state | business logic outside the signed proof |
+| Adapters | narrow execution mechanics | policy expansion or signer authority |
+| SAC | asset balances and token interface | treasury policy |
+
+### 6.9 Contract Governance and Replacement Rules
 
 Contract/module replacement is a high-risk governance action.
 
@@ -1384,25 +1482,26 @@ The following invariants MUST hold at all times:
 - Disabled adapters fail closed.
 - Destinations default to disallowed.
 
-### 13.3 Auditor Review Areas
+### 13.3 Security Review Matrix
 
-High-priority audit areas:
+The following matrix defines the security areas that require focused implementation review. Each row links a protocol surface to the failure mode it protects against and the verification expected before deployment.
 
-- `__check_auth` context parsing and signer binding
-- signature ordering and duplicate signature rejection
-- signer weight accounting
-- threshold updates and signer removal edge cases
-- session key scope validation
-- session consumed amount accounting
-- adapter preauthorization correctness
-- policy version pinning
-- automation replay protection
-- attestation proof binding
-- recovery transition rules
-- frozen and paused state bypass checks
-- storage TTL and archival handling
-- integer overflow and `i128` amount validation
-- adapter allowlist and asset allowlist correctness
+| Review Area | Primary Risk | Required Verification |
+|---|---|---|
+| Contract-account authorization | Invalid signer, wrong account context, or replayed authorization accepted by `__check_auth` | Verify network, SmartAccount address, function, action hash, signer ID, policy version, nonce or execution ID, and expiry binding |
+| Signature aggregation | Duplicate signatures, invalid ordering, or incorrect weight counting satisfies a threshold | Test duplicate rejection, deterministic signer ordering, role-specific weights, and threshold edge cases |
+| Signer management | Removing or replacing signers leaves the account below required safety thresholds | Test signer addition, revocation, threshold updates, and signer removal invariants |
+| Session keys | Delegated key exceeds intended authority | Test action type, asset, destination, adapter, expiry, per-execution cap, cumulative cap, and single-use restrictions |
+| Session accounting | Consumed amount is undercounted or reset unexpectedly | Test cumulative accounting across successful, failed, repeated, and boundary-value executions |
+| Adapter preauthorization | Adapter moves assets beyond the exact SmartAccount-approved action | Verify adapter ID, action type, asset, destination, amount, slippage, recipient list, and strategy parameters before dispatch |
+| Policy version pinning | A policy change silently changes previously approved automation behavior | Test policy-version mismatch, policy migration, and stale execution rejection |
+| Automation replay protection | Scheduled or recurring execution runs more than once for the same child execution ID | Test child execution consumption, terminal states, duplicate submissions, and retry behavior |
+| Attestation proof binding | A condition proof is reused across accounts, networks, capabilities, or verifier deployments | Verify domain, network passphrase, SmartAccount, verifier address, attestor set version, attestation ID, capability ID, payload hash, and expiry |
+| Recovery transitions | Recovery bypasses normal controls or installs unsafe signer thresholds | Test freeze, pause, recovery initiation, cancellation, delay enforcement, finalization, and post-recovery threshold safety |
+| Pause and freeze controls | Normal execution remains possible during emergency states | Test every execution and management entrypoint while paused, frozen, or recovery-pending |
+| Storage TTL and archival | Critical signer, policy, intent, or replay state expires or becomes unavailable | Test TTL extension paths, restore handling, maintenance permissions, and prune maturity rules |
+| Amount arithmetic | Overflow, sign errors, or precision mistakes affect treasury balances or limits | Test `i128` validation, non-negative amounts, maximum values, cumulative caps, split totals, and slippage basis points |
+| Allowlists | Unsupported assets, destinations, or adapters pass validation | Test fail-closed behavior for missing, disabled, stale, or replaced asset and adapter configuration |
 
 ### 13.4 Security Assurance Requirements
 
