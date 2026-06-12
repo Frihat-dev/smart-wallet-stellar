@@ -1,10 +1,31 @@
 # Smart Treasury Account Technical Architecture
 
+Document scope:
+
+- Product: Smart Treasury Account (STA)
+- Network: Stellar / Soroban
+- Asset model: Stellar Asset Contract (SAC)
+- Primary wallets: Freighter and xBull through Stellar Wallets Kit
+- Frontend framework: Scaffold Stellar
+- Architecture level: full technical design for contract, frontend, relayer, verification, deployment, and security controls
+
 ## 1. Purpose
 
 This document defines the technical architecture for Smart Treasury Account (STA), a Soroban-native programmable treasury wallet for Stellar.
 
-It describes how STA integrates with Stellar, how the onchain contracts are composed, how wallet and relayer flows work, and which invariants must be enforced before testnet and mainnet release.
+It describes how STA integrates with Stellar, how the onchain contracts are composed, how wallet and relayer flows work, and which security invariants define a correct deployment across local, testnet, and mainnet environments.
+
+### 1.1 Document Policy and Terminology
+
+This document uses the following policy language:
+
+- **MUST**: required for a secure and correct STA deployment.
+- **SHOULD**: strongly recommended; exceptions require explicit engineering approval.
+- **MAY**: optional capability that does not affect core security.
+- **V1**: the first complete public architecture of STA.
+- **PoC**: a testnet proof-of-concept implementation used to validate the architecture with real Stellar tooling.
+
+Architectural statements are written as target requirements. They do not depend on a specific partial repository state.
 
 ## 2. Executive Summary
 
@@ -23,7 +44,7 @@ The target product supports:
 - recovery, pause, and freeze controls
 - audit-friendly event and state boundaries
 
-The first production path is a testnet PoC using:
+The V1 validation path is a testnet PoC using:
 
 - Rust/Soroban smart contracts
 - Scaffold Stellar for the frontend and generated TypeScript client layer
@@ -97,14 +118,14 @@ This document follows a layered architecture format:
 4. Offchain architecture: frontend, wallet integration, relayer, attestors, and indexer.
 5. Execution flows: immediate, scheduled, conditional, split, and recovery workflows.
 6. Security architecture: trust boundaries, invariants, audit areas, and operational controls.
-7. Deployment architecture: local, testnet, and mainnet readiness.
+7. Deployment architecture: local, testnet, and mainnet environment design.
 
 Diagrams use Mermaid so they render directly in GitHub.
 
 ## 3.2 Diagram Index
 
 - System context: Section 5.1
-- Trust boundary: Section 5.2
+- Trust boundary: Sections 5.2 and 13.1
 - Onchain contract topology: Section 6.7
 - Wallet signing and simulation: Section 8.5
 - Frontend module architecture: Section 9.2
@@ -121,15 +142,15 @@ The following decisions remove ambiguity for implementation.
 
 STA will use a staged signer strategy:
 
-1. The first testnet PoC will use Freighter and xBull wallet signing with Ed25519 signer records, plus scoped session keys for delegated operations.
-2. The target production architecture remains passkey-capable through a P256/WebAuthn signer path in `SmartAccount`.
-3. Passkey/P256 support will be implemented after a focused compatibility spike covering Stellar SDK support, wallet UX, payload normalization, and onchain verification cost.
+1. The testnet PoC uses Freighter and xBull wallet signing with Ed25519 signer records, plus scoped session keys for delegated operations.
+2. The production architecture remains passkey-capable through a P256/WebAuthn signer path in `SmartAccount`.
+3. The P256/WebAuthn path requires a focused compatibility spike covering Stellar SDK support, wallet UX, payload normalization, and onchain verification cost.
 
 This is the best tradeoff because it lets the project demonstrate Stellar-native treasury flows immediately with existing wallets while preserving the stronger long-term UX promised by contract accounts.
 
-### Decision 2: IntentRegistry is a core module, not optional future work
+### Decision 2: IntentRegistry is a core module
 
-The current SmartAccount-local automation capability storage is acceptable as an initial implementation shortcut, but the target architecture requires `IntentRegistry`.
+`IntentRegistry` is required as a first-class module for scheduled, recurring, and conditional treasury workflows. SmartAccount may store compact capability references for fast authorization checks, but the canonical lifecycle and replay state belongs in `IntentRegistry`.
 
 `IntentRegistry` is part of the core architecture because recurring treasury workflows need:
 
@@ -141,11 +162,11 @@ The current SmartAccount-local automation capability storage is acceptable as an
 - auditable execution history
 - pruning and retention rules
 
-SmartAccount will remain the execution authority, but IntentRegistry will become the canonical lifecycle and replay-state module for scheduled, recurring, and conditional treasury operations.
+SmartAccount remains the execution authority, while IntentRegistry is the canonical lifecycle and replay-state module for scheduled, recurring, and conditional treasury operations.
 
 ### Decision 3: Custom minimal relayer first, managed relayer optional later
 
-STA will build a custom minimal Node.js relayer for the PoC and first testnet demo.
+STA uses a custom minimal Node.js relayer for the PoC and testnet demo architecture.
 
 The relayer will:
 
@@ -157,22 +178,7 @@ The relayer will:
 - poll transaction status
 - index execution results
 
-OpenZeppelin Relayer or another managed relayer may be evaluated later, but it should not be a dependency for the first implementation phase. A custom relayer gives the team full visibility into Soroban simulation, auth handling, transaction assembly, retries, and replay failure modes during the most important security-hardening phase.
-
-Current tests cover:
-
-- SmartAccount initialization
-- `__check_auth` signer validation
-- role separation
-- management, governance, recovery, and spend thresholds
-- session key scope enforcement
-- account allowlists
-- adapter execution and rejection paths
-- stored automation execution
-- attestation-gated execution
-- replay protection
-- pause, freeze, and recovery finalization
-- ConditionVerifier governance and quorum validation
+OpenZeppelin Relayer or another managed relayer is not part of the required V1 architecture. Any managed relayer integration must preserve the same no-authority trust boundary. A custom relayer gives the team full visibility into Soroban simulation, auth handling, transaction assembly, retries, and replay failure modes during the security-hardening phase.
 
 ## 5. System Context
 
@@ -206,47 +212,61 @@ flowchart LR
 ### 5.2 Trust Boundary Diagram
 
 ```mermaid
-flowchart TB
-    subgraph Offchain["Offchain / Untrusted or Semi-Trusted"]
-        UI["STA Web App"]
-        Wallet2["Freighter / xBull"]
-        Relay2["STA Relayer"]
-        Indexer["Indexer / Analytics"]
-        Attestor2["Attestor Service"]
-        RPC2["RPC Provider"]
+flowchart LR
+    subgraph OFFCHAIN[Offchain zone]
+        UI[STA Web App]
+        WALLET[Freighter or xBull]
+        RELAYER[STA Relayer]
+        INDEXER[Indexer and Analytics]
+        ATTESTOR[Attestor Service]
+        RPC[RPC Provider]
     end
 
-    subgraph Onchain["Onchain / Deterministic Enforcement"]
-        SA["SmartAccount<br/>root authority"]
-        PE["PolicyEngine"]
-        IR["IntentRegistry"]
-        CV["ConditionVerifier"]
-        AD["Approved Adapters"]
-        TOKEN["SAC Assets"]
+    subgraph ONCHAIN[Onchain enforcement zone]
+        SA[SmartAccount root authority]
+        PE[PolicyEngine]
+        IR[IntentRegistry]
+        CV[ConditionVerifier]
+        ADAPTERS[Approved Adapters]
+        SAC[SAC Assets]
     end
 
-    UI -->|"builds and simulates tx"| RPC2
-    Wallet2 -->|"signs"| UI
-    Relay2 -->|"submits eligible automation"| RPC2
-    Attestor2 -->|"proof only"| CV
-    RPC2 -->|"transaction execution"| SA
+    WALLET -->|signs user approved payloads| UI
+    UI -->|builds and simulates transactions| RPC
+    RELAYER -->|submits eligible automation| RPC
+    INDEXER -->|reads events and status| RPC
+    ATTESTOR -->|signed condition proof| CV
+    RPC -->|network execution| SA
     SA --> PE
     SA --> IR
     SA --> CV
-    SA --> AD
-    AD --> TOKEN
-
-    classDef trusted fill:#e8f5e9,stroke:#2e7d32,color:#111;
-    classDef untrusted fill:#fff3e0,stroke:#ef6c00,color:#111;
-    class SA,PE,IR,CV,AD,TOKEN trusted;
-    class UI,Wallet2,Relay2,Indexer,Attestor2,RPC2 untrusted;
+    SA --> ADAPTERS
+    ADAPTERS --> SAC
 ```
 
 Security interpretation:
 
 - Offchain systems can prepare, sign, submit, index, and display actions.
-- Only onchain contracts decide whether treasury movement is valid.
+- Offchain systems are not trusted to decide whether treasury movement is valid.
+- SmartAccount is the root authority for treasury execution.
+- PolicyEngine, IntentRegistry, ConditionVerifier, and approved adapters are constrained onchain modules.
 - The relayer is intentionally outside the trust boundary and cannot create authority.
+- RPC providers and indexers are read/transport dependencies, not policy authorities.
+
+Boundary policy:
+
+| Component | Trust Level | Security Rule |
+|---|---:|---|
+| SmartAccount | Trusted root | MUST authorize every treasury movement |
+| PolicyEngine | Constrained onchain module | MUST validate policy version and rule scope |
+| IntentRegistry | Constrained onchain module | MUST enforce intent lifecycle and replay state |
+| ConditionVerifier | Constrained onchain module | MUST verify quorum, freshness, and proof binding |
+| Approved adapters | Constrained onchain modules | MUST execute only SmartAccount-preauthorized actions |
+| Wallets | User-controlled signers | MUST sign bounded payloads; cannot bypass onchain policy |
+| Relayer | Untrusted submitter | MUST NOT hold owner, governance, recovery, or management authority |
+| RPC provider | Untrusted transport | MUST NOT be treated as an authority source |
+| Indexer | Untrusted read model | MUST NOT be used as execution truth |
+| Attestor service | Semi-trusted input | MUST be verified by ConditionVerifier quorum before execution |
 
 ## 6. Onchain Contract Architecture
 
@@ -299,7 +319,7 @@ finalize_recovery()
 
 `PolicyEngine` validates account-level rules that are easier to evolve independently from SmartAccount.
 
-Current scope:
+V1 scope:
 
 - current policy version
 - allow or block payments
@@ -357,7 +377,7 @@ Responsibilities:
 
 `RecoveryManager` is reserved for future separation of emergency workflow orchestration.
 
-Current recovery controls live in `SmartAccount`:
+Recovery controls are anchored in `SmartAccount` in V1:
 
 - pause
 - freeze
@@ -679,8 +699,8 @@ Rationale:
 - Rust contract workspace compatibility
 - modern frontend structure
 - generated TypeScript clients
-- environment configuration for local, testnet, and future mainnet
-- faster path from deployed contracts to usable UI
+- environment configuration for local, testnet, and mainnet targets
+- faster path from contract interfaces to usable UI
 
 Scaffold setup path:
 
@@ -692,7 +712,7 @@ cd sta-app
 npm start
 ```
 
-STA will use Scaffold Stellar for the application shell and contract-client workflow, while preserving this repository as the canonical contract workspace. The frontend package can either live under `app/` in this repository or be initialized as a sibling package and then migrated into a workspace once the contract interfaces stabilize.
+STA uses Scaffold Stellar for the application shell and contract-client workflow. The frontend package can live under `app/` in a monorepo or be initialized as a sibling package and then migrated into a workspace once the contract interfaces stabilize.
 
 Target application structure:
 
@@ -735,17 +755,17 @@ Environment configuration:
 local:
   network_passphrase: local sandbox network
   rpc_url: local quickstart RPC
-  contracts: locally deployed SmartAccount suite
+  contracts: contract IDs produced by local deployment scripts
 
 testnet:
   network_passphrase: Test SDF Network ; September 2015
   rpc_url: Stellar testnet RPC provider
-  contracts: published testnet contract IDs
+  contracts: contract IDs produced by testnet deployment scripts
 
 mainnet:
   network_passphrase: Public Global Stellar Network ; September 2015
   rpc_url: production RPC provider
-  contracts: audited and published contract IDs
+  contracts: audited contract IDs produced by controlled mainnet deployment
 ```
 
 Generated client responsibilities:
@@ -760,7 +780,7 @@ Frontend integration steps:
 
 1. Initialize Scaffold Stellar app.
 2. Add Wallets Kit connection and network state.
-3. Generate or hand-wrap TypeScript clients for current contracts.
+3. Generate or hand-wrap TypeScript clients for the architecture contracts.
 4. Add SmartAccount setup screens.
 5. Add transaction simulation and signing utility.
 6. Add execution dashboards for payment, split, automation, and recovery flows.
@@ -1353,7 +1373,7 @@ High-priority audit areas:
 | Frozen account bypass | Execution entrypoints call active-state checks |
 | Governance compromise | Role separation, weighted thresholds, delayed governance for verifier changes |
 | Asset issuer restrictions | SAC authorization and trustline behavior are treated as deployment prerequisites |
-| State archival | TTL extension and monitoring are required for production readiness |
+| State archival | TTL extension and monitoring are required for production operation |
 
 ## 14. RPC, Simulation, and Transaction Submission
 
@@ -1408,7 +1428,7 @@ Events should be emitted for every security-significant action:
 - adapter configured
 - destination allowlist changed
 - intent created or cancelled
-- automation capability granted or revoked
+- automation capability created or revoked
 - interactive execution succeeded
 - automation execution succeeded
 - attestation consumed
@@ -1468,7 +1488,7 @@ prune_replay_state(parent_intent_id, mature_range)
 Permission model:
 
 - Owner, management quorum, or governance quorum can extend all critical TTL targets.
-- Permissionless TTL extension is allowed for non-mutating maintenance of clearly identified public targets, such as active intent records or consumed replay records, because extending TTL does not grant authority or alter execution semantics.
+- Permissionless TTL extension is allowed for non-mutating maintenance of clearly identified public targets, such as active intent records or consumed replay records, because extending TTL does not create authority or alter execution semantics.
 - Pruning replay state is permissionless only after deterministic maturity conditions are satisfied.
 - Pruning must never reduce parent intent cumulative counters or make a child execution replayable.
 
@@ -1507,9 +1527,11 @@ These constants must be fixed per deployment version and documented with the dep
 
 ## 17. Deployment Architecture
 
-### 17.1 Local Development
+### 17.1 Local Development Target
 
-Tools:
+The local environment is a reproducible build and validation target. It does not assume pre-existing deployed contracts; contract IDs are produced by the local deployment workflow and written into the local environment configuration.
+
+Required tools:
 
 - Rust and Cargo
 - Stellar CLI
@@ -1517,21 +1539,23 @@ Tools:
 - Scaffold Stellar frontend
 - Wallets Kit
 
-Local flow:
+Required local flow:
 
 ```text
-cargo test --workspace
-stellar contract build
-stellar quickstart local network
-deploy contracts
-configure environment
-run frontend
-execute test flows
+1. Build contract WASM artifacts.
+2. Start a local Stellar Quickstart network.
+3. Deploy SmartAccount, PolicyEngine, IntentRegistry, ConditionVerifier, and adapters.
+4. Resolve or deploy SAC contracts for local test assets.
+5. Initialize the STA contract suite.
+6. Write generated contract IDs into the local frontend and relayer environment.
+7. Run contract tests, frontend flows, and relayer execution tests.
 ```
 
-### 17.2 Testnet Deployment
+### 17.2 Testnet Deployment Target
 
-Testnet flow:
+The testnet environment is the public validation target for the full architecture. It does not assume any contract already exists on Stellar testnet; every contract ID is produced by a fresh or explicitly versioned deployment process.
+
+Required testnet flow:
 
 ```text
 1. Build all contract WASM artifacts.
@@ -1545,72 +1569,81 @@ Testnet flow:
 9. Configure signer set, policies, adapters, and allowlists.
 10. Fund SmartAccount.
 11. Execute payment, split, automation, and conditional demos.
-12. Publish contract IDs and reproducible demo instructions.
+12. Publish contract IDs, WASM hashes, network passphrase, and reproducible demo instructions.
 ```
 
-### 17.3 Mainnet Readiness
+### 17.3 Mainnet Deployment Requirements
 
-Before mainnet:
+Mainnet deployment has independent artifact, security, and operations requirements. It does not inherit contract IDs from local or testnet. Mainnet uses separately deployed and audited artifacts.
 
-- complete IntentRegistry implementation
-- expand PolicyEngine rules
-- harden adapters for real venues and strategies
-- complete TTL maintenance
-- complete deployment scripts
-- complete event indexing
-- complete frontend policy review screens
-- complete relayer monitoring
-- complete independent audit
-- run testnet rehearsal with production-like configs
+Mainnet requirements:
+
+- finalized IntentRegistry lifecycle and replay-state implementation
+- finalized PolicyEngine rule set for supported V1 actions
+- hardened adapters for real venues and strategies
+- implemented TTL maintenance and monitoring
+- reproducible deployment scripts for all contracts and environment files
+- event indexing and audit-log exports
+- frontend policy review screens for every signing flow
+- relayer monitoring, alerting, and incident runbooks
+- independent audit of the deployed contract artifacts
+- full testnet rehearsal using production-like configuration
 
 ### 17.4 Deployment Topology
 
 ```mermaid
 flowchart TB
-    subgraph Dev["Local Development"]
-        LocalContracts["Local Soroban Contracts"]
-        Quickstart["Stellar Quickstart"]
-        LocalApp["Scaffold Stellar App"]
+    subgraph Dev["Local Development Target"]
+        LocalBuild["Build WASM artifacts"]
+        Quickstart["Local Stellar Quickstart"]
+        LocalDeploy["Deploy local STA suite"]
+        LocalConfig["Write local environment config"]
+        LocalApp["Run Scaffold Stellar App"]
     end
 
-    subgraph Testnet["Stellar Testnet"]
-        TestRPC["Testnet RPC"]
-        TestContracts["Deployed STA Contract Suite"]
-        TestSAC["Test SAC Assets"]
-        TestRelayer["STA Testnet Relayer"]
-        Lab2["Stellar Lab"]
+    subgraph Testnet["Stellar Testnet Target"]
+        TestBuild["Versioned WASM artifacts"]
+        TestRPC["Stellar Testnet RPC"]
+        TestDeploy["Deploy testnet STA suite"]
+        TestConfig["Publish testnet environment config"]
+        TestRelayer["Run testnet relayer"]
+        Lab2["Validate with Stellar Lab"]
     end
 
-    subgraph Prod["Mainnet Readiness"]
-        Audit["Independent Audit"]
-        Runbooks["Deployment Runbooks"]
-        Monitoring["Monitoring and Alerts"]
-        MainnetContracts["Mainnet Contract Suite"]
+    subgraph Prod["Mainnet Deployment Requirements"]
+        Audit["Independent audit"]
+        Runbooks["Deployment runbooks"]
+        MainnetDeploy["Controlled mainnet deployment"]
+        Monitoring["Monitoring and alerts"]
     end
 
-    LocalContracts --> Quickstart
-    LocalApp --> Quickstart
-    LocalContracts --> TestContracts
-    TestContracts --> TestRPC
-    TestSAC --> TestContracts
-    TestRelayer --> TestRPC
+    LocalBuild --> Quickstart
+    Quickstart --> LocalDeploy
+    LocalDeploy --> LocalConfig
+    LocalConfig --> LocalApp
+    LocalBuild --> TestBuild
+    TestBuild --> TestDeploy
+    TestDeploy --> TestRPC
+    TestDeploy --> TestConfig
+    TestConfig --> TestRelayer
     Lab2 --> TestRPC
-    TestContracts --> Audit
+    TestDeploy --> Audit
     Audit --> Runbooks
-    Runbooks --> MainnetContracts
-    MainnetContracts --> Monitoring
+    Runbooks --> MainnetDeploy
+    MainnetDeploy --> Monitoring
 ```
 
 Deployment controls:
 
-- Testnet contract IDs must be published with network passphrase and WASM hashes.
-- Admin initialization must be reproducible from deployment scripts.
-- Mainnet deployment must use audited WASM artifacts only.
-- Contract addresses, policy versions, and adapter IDs must be versioned in the frontend environment config.
+- Local, testnet, and mainnet each have independent contract IDs and environment files.
+- Testnet contract IDs MUST be published with network passphrase and WASM hashes.
+- Admin initialization MUST be reproducible from deployment scripts.
+- Mainnet deployment MUST use audited WASM artifacts only.
+- Contract addresses, policy versions, and adapter IDs MUST be versioned in the frontend environment config.
 
-## 18. Build-Ready Task Breakdown
+## 18. Implementation Units
 
-Immediate engineering tasks:
+Required engineering units:
 
 1. Add Scaffold Stellar app package.
 2. Generate clients for SmartAccount, PolicyEngine, ConditionVerifier, IntentRegistry, and adapters.
